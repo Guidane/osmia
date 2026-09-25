@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card narrow">
+  <h1>{{ heading }}</h1>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form.base_fields_bound %}
+      {% include "core/_field.html" %}
+    {% endfor %}
+
+    <fieldset class="attribute-editor">
+      <legend>Attributes</legend>
+      <p class="muted" data-attr-empty>The selected category has no attributes. Add them on the <a href="{% url 'inventory:category_list' %}">Categories</a> page.</p>
+      {% for group in form.attribute_fields_bound %}
+        <div data-attr-category="{{ group.category.pk }}" hidden>
+          {% for field in group.fields %}{% include "core/_field.html" %}{% endfor %}
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <div class="actions">
+      <button class="btn primary">Save</button>
+      <a class="btn" href="{% if cancel_url %}{{ cancel_url }}{% else %}{% url 'inventory:part_list' %}{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+<script>
+  // Show only the attribute fields of the selected category.
+  (function () {
+    const select = document.getElementById('{{ form.category.id_for_label }}');
+    const groups = document.querySelectorAll('[data-attr-category]');
+    const empty = document.querySelector('[data-attr-empty]');
+    function sync() {
+      let shown = false;
+      groups.forEach(g => { g.hidden = g.dataset.attrCategory !== select.value; shown = shown || !g.hidden; });
+      empty.hidden = shown;
+    }
+    select.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+{% endblock %}

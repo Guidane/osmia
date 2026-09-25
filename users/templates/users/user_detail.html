@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>{{ person }} {% if not person.is_active %}<span class="badge off">Inactive</span>{% endif %}</h1>
+  {% if can_edit %}<a class="btn" href="{% url 'users:edit' person.pk %}">Edit</a>{% endif %}
+</div>
+
+<div class="grid-2">
+  <div>
+    {# Panels contributed by other modules (tasks, inventory, ...) #}
+    {% include "core/panels.html" %}
+  </div>
+  <section class="card">
+    <dl class="props">
+      <dt>Username</dt><dd>{{ person.username }}</dd>
+      <dt>Email</dt><dd>{{ person.email|default:"—" }}</dd>
+      <dt>Phone</dt><dd>{{ person.phone|default:"—" }}</dd>
+      <dt>Job title</dt><dd>{{ person.job_title|default:"—" }}</dd>
+      <dt>Department</dt><dd>{% if person.department %}<a href="{{ person.department.get_absolute_url }}">{{ person.department }}</a>{% else %}—{% endif %}</dd>
+      <dt>Joined</dt><dd>{{ person.date_joined|date }}</dd>
+      <dt>Last login</dt><dd>{{ person.last_login|date|default:"Never" }}</dd>
+    </dl>
+  </section>
+</div>
+{% endblock %}

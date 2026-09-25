@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="app-grid">
+  {% for m in osmia_modules %}{% if m.home_url_name %}
+    <a class="app-tile" href="{% url m.home_url_name %}">
+      <span class="app-icon">{{ m.manifest.icon }}</span>
+      <strong>{{ m.manifest.title }}</strong>
+    </a>
+  {% endif %}{% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>{{ part.part_number }} {% if part.name %}<span class="muted">· {{ part.name }}</span>{% endif %}
+    {% if not part.is_active %}<span class="badge off">Archived</span>
+    {% elif part.is_low_stock %}<span class="badge warn">Low stock</span>{% endif %}</h1>
+  <a class="btn primary" href="{% url 'inventory:move_create' %}?part={{ part.pk }}&move_type=in">Receive</a>
+  <a class="btn" href="{% url 'inventory:move_create' %}?part={{ part.pk }}&move_type=out">Issue</a>
+  <a class="btn" href="{% url 'inventory:move_create' %}?part={{ part.pk }}&move_type=adjust">Count</a>
+  <a class="btn" href="{% url 'inventory:part_edit' part.pk %}">Edit</a>
+</div>
+
+<div class="grid-2">
+  <div>
+    <section class="card panel">
+      <h2>Stock history</h2>
+      {% include "inventory/_moves_table.html" with hide_part=True %}
+    </section>
+    {# Panels contributed by other modules, e.g. assemblies that use this part #}
+    {% include "core/panels.html" %}
+  </div>
+  <div>
+    <section class="card">
+      <dl class="props">
+        <dt>Category</dt><dd>{{ part.category|default:"—" }}</dd>
+        <dt>Location</dt><dd>{{ part.location|default:"—" }}</dd>
+        <dt>On hand</dt><dd><strong>{{ part.quantity_on_hand|floatformat:"-2" }} {{ part.unit }}</strong></dd>
+        <dt>Reorder at</dt><dd>{{ part.reorder_level|floatformat:"-2" }} {{ part.unit }}</dd>
+        <dt>Unit cost</dt><dd>{{ part.cost }}</dd>
+        <dt>Stock value</dt><dd>{{ part.stock_value|floatformat:2 }}</dd>
+      </dl>
+    </section>
+
+    <section class="card panel">
+      <h2>Attributes</h2>
+      {% if attribute_values %}
+        <dl class="props">
+          {% for v in attribute_values %}<dt>{{ v.attribute.name }}</dt><dd>{{ v.value }}</dd>{% endfor %}
+        </dl>
+      {% elif part.category %}
+        <p class="muted">No values yet. <a href="{% url 'inventory:part_edit' part.pk %}">Fill them in</a>.</p>
+      {% else %}
+        <p class="muted">Pick a category to get attributes.</p>
+      {% endif %}
+    </section>
+
+    <section class="card panel">
+      <h2>Interconnect</h2>
+      {% if part.interconnect_family %}
+        <p>{{ part.interconnect_label }}</p>
+        {% if mates %}
+          <p class="muted">Mates with:</p>
+          <ul class="plain">
+            {% for m in mates %}<li><a href="{{ m.get_absolute_url }}">{{ m }}</a> <span class="muted">{{ m.interconnect_gender|default:"unspecified" }}</span></li>{% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">No other part mates with this one.</p>
+        {% endif %}
+      {% else %}
+        <p class="muted">Not a connector.</p>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

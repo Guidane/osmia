@@ -1,0 +1,18 @@
+<table class="list">
+  <thead><tr><th>Date</th>{% if not hide_part %}<th>Part</th>{% endif %}<th>Type</th><th class="num">Change</th>{% if not hide_task %}<th>Task</th>{% endif %}<th>By</th><th>Note</th></tr></thead>
+  <tbody>
+  {% for m in moves %}
+    <tr>
+      <td>{{ m.created_at|date:"Y-m-d H:i" }}</td>
+      {% if not hide_part %}<td><a href="{{ m.part.get_absolute_url }}">{{ m.part }}</a></td>{% endif %}
+      <td><span class="badge {% if m.delta > 0 %}in{% elif m.delta < 0 %}out{% endif %}">{{ m.get_move_type_display }}</span></td>
+      <td class="num">{% if m.delta > 0 %}+{% endif %}{{ m.delta|floatformat:"-2" }} {{ m.part.unit }}</td>
+      {% if not hide_task %}<td>{% if m.task %}<a href="{{ m.task.get_absolute_url }}">{{ m.task }}</a>{% else %}—{% endif %}</td>{% endif %}
+      <td>{{ m.user|default:"—" }}</td>
+      <td>{{ m.note }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="muted">No stock moves.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

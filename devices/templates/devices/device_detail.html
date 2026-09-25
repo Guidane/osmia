@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+{% with d=device %}
+<div class="toolbar">
+  <h1><span class="swatch" style="background: {{ d.color }}"></span> {{ d.name }}
+    {% if d.part_number %}<span class="muted">· {{ d.part_number }}</span>{% endif %}
+    <span class="badge">v{{ d.version }}</span></h1>
+  <a class="btn primary" href="{% url 'devices:connector_create' d.pk %}">Add connector</a>
+  <a class="btn" href="{% url 'devices:edit' d.pk %}">Edit</a>
+</div>
+
+<div class="grid-2">
+  <div>
+    <section class="card panel">
+      <h2>Connectors</h2>
+      {% include "devices/_connector_table.html" with editable=True %}
+    </section>
+
+    {% for c in connectors %}
+    <section class="card panel">
+      <h2>{{ c.designator }} pinout {% if c.description %}<span class="muted">· {{ c.description }}</span>{% endif %}</h2>
+      <table class="list compact">
+        <thead><tr><th class="num">#</th><th>Pin</th><th>Signal</th><th>Pin set</th></tr></thead>
+        <tbody>
+        {% for p in c.pins.all %}
+          <tr><td class="num muted">{{ p.position }}</td><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td><td>{{ p.set_name }}</td></tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted">No pins.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endfor %}
+
+    {# Panels contributed by other modules, e.g. harness projects using this device #}
+    {% include "core/panels.html" %}
+  </div>
+
+  <div>
+    <section class="card">
+      <dl class="props">
+        <dt>Made by</dt><dd>{{ d.get_origin_display }}{% if d.manufacturer %} · {{ d.manufacturer }}{% endif %}</dd>
+        <dt>Role</dt><dd>{{ d.get_role_display }}</dd>
+        {% if d.assembly %}<dt>Assembly</dt><dd><a href="{{ d.assembly.get_absolute_url }}">{{ d.assembly }}</a> <span class="muted">rev {{ d.assembly.revision }}</span></dd>{% endif %}
+        {% if d.model_number %}<dt>Model</dt><dd>{{ d.model_number }}</dd>{% endif %}
+        {% if d.asset_tag %}<dt>Asset tag</dt><dd>{{ d.asset_tag }}</dd>{% endif %}
+        <dt>Owner</dt><dd>{% if d.responsible %}<a href="{{ d.responsible.get_absolute_url }}">{{ d.responsible }}</a>{% else %}—{% endif %}</dd>
+      </dl>
+      {% if d.notes %}<hr>{{ d.notes|linebreaks }}{% endif %}
+    </section>
+
+    <section class="card panel">
+      <h2>Versions</h2>
+      <p class="muted">A new version is saved whenever the name, connectors or pins change.</p>
+      {% for v in versions %}
+        <div class="version-line">
+          <span><strong>v{{ v.version }}</strong> <small class="muted">{{ v.created_at|date:"Y-m-d H:i" }}{% if v.created_by %} · {{ v.created_by }}{% endif %}</small></span>
+          {% if v.version == d.version %}<span class="badge done">current</span>
+          {% else %}<form method="post" action="{% url 'devices:activate_version' d.pk v.version %}">{% csrf_token %}<button class="btn small">Make current</button></form>{% endif %}
+        </div>
+      {% empty %}
+        <p class="muted">No versions yet.</p>
+      {% endfor %}
+    </section>
+  </div>
+</div>
+{% endwith %}
+{% endblock %}

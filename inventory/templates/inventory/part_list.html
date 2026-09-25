@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>Parts</h1>
+  <form method="get">
+    <input type="search" name="q" value="{{ request.GET.q }}" placeholder="Number, description, attribute…">
+    <select name="category" onchange="this.form.submit()">
+      <option value="">All categories</option>
+      {% for c in categories %}
+        <option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:'s' %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="location" onchange="this.form.submit()">
+      <option value="">All locations</option>
+      {% for l in locations %}
+        <option value="{{ l.pk }}" {% if request.GET.location == l.pk|stringformat:'s' %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <label><input type="checkbox" name="low" value="1" onchange="this.form.submit()" {% if request.GET.low %}checked{% endif %}> Low stock</label>
+    <label><input type="checkbox" name="archived" value="1" onchange="this.form.submit()" {% if request.GET.archived %}checked{% endif %}> Show archived</label>
+    <button class="btn">Filter</button>
+  </form>
+  <a class="btn primary" href="{% url 'inventory:part_create' %}">New part</a>
+</div>
+
+<table class="list">
+  <thead><tr><th>Part number</th><th>Description</th><th>Category</th><th>Location</th><th>Interconnect</th><th class="num">On hand</th><th class="num">Reorder at</th><th class="num">Value</th><th></th></tr></thead>
+  <tbody>
+  {% for p in object_list %}
+    <tr class="{% if p.is_low_stock and p.is_active %}warn{% endif %}">
+      <td><a href="{{ p.get_absolute_url }}">{{ p.part_number }}</a></td>
+      <td>{{ p.name }} {% if not p.is_active %}<span class="badge off">Archived</span>{% endif %}</td>
+      <td>{{ p.category|default:"—" }}</td>
+      <td>{{ p.location|default:"—" }}</td>
+      <td>{{ p.interconnect_label|default:"—" }}</td>
+      <td class="num">{{ p.quantity_on_hand|floatformat:"-2" }} {{ p.unit }}</td>
+      <td class="num">{{ p.reorder_level|floatformat:"-2" }}</td>
+      <td class="num">{{ p.stock_value|floatformat:2 }}</td>
+      <td>{% if p.is_low_stock and p.is_active %}<span class="badge warn">Low</span>{% endif %}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="9" class="muted">No parts.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

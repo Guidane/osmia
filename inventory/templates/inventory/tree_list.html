@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% comment %}Shared list page for nested categories and locations.{% endcomment %}
+{% block content %}
+<div class="toolbar">
+  <h1>{{ heading }}</h1>
+  <a class="btn primary" href="{{ create_url }}">New</a>
+</div>
+<table class="list">
+  <thead><tr><th>Name</th>{% if show_attributes %}<th class="num">Attributes</th>{% endif %}<th class="num">Parts</th></tr></thead>
+  <tbody>
+  {% for node in object_list %}
+    <tr>
+      <td>
+        {% for a in node.ancestors %}{% if not forloop.last %}<span class="muted">{{ a.name }} › </span>{% endif %}{% endfor %}
+        <a href="{{ node.get_absolute_url }}">{{ node.name }}</a>
+      </td>
+      {% if show_attributes %}<td class="num">{{ node.attribute_count }}</td>{% endif %}
+      <td class="num"><a href="{% url 'inventory:part_list' %}?{{ filter_param }}={{ node.pk }}">{{ node.part_count }}</a></td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="3" class="muted">Nothing here yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

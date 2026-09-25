@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>{{ heading }}</h1>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <div class="form-grid">
+      {% for field in form %}{% include "core/_field.html" %}{% endfor %}
+    </div>
+
+    <fieldset>
+      <legend>Pins</legend>
+      <p class="muted">Pins are numbered in the order shown. Give pins that belong together the same pin set, e.g. a PWR and GND pair as "Set 1"; the harness designer wires sets together.</p>
+      {{ formset.management_form }}
+      {{ formset.non_form_errors }}
+      <table class="list compact">
+        <thead><tr><th class="num">#</th><th>Pin label</th><th>Signal</th><th>Pin set</th><th>Remove</th></tr></thead>
+        <tbody id="pin-rows">
+        {% for f in formset %}
+          <tr>
+            <td class="num muted">{{ forloop.counter }}</td>
+            <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.label }}{{ f.label.errors }}</td>
+            <td>{{ f.signal }}</td>
+            <td>{{ f.set_name }}</td>
+            <td>{{ f.DELETE }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="muted">No pins yet. Use "Add pins" above.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </fieldset>
+
+    <div class="actions">
+      <button class="btn primary">Save</button>
+      <button class="btn" name="continue" value="1">Save and keep editing</button>
+      <a class="btn" href="{{ device.get_absolute_url }}">Cancel</a>
+    </div>
+  </form>
+  {% if connector.pk %}
+  <form method="post" action="{% url 'devices:connector_delete' device.pk connector.pk %}" onsubmit="return confirm('Remove {{ connector.designator }} and its pins?')" style="margin-top: 12px">
+    {% csrf_token %}<button class="btn danger small">Remove connector</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

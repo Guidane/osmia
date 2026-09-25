@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>Stock moves</h1>
+  <form method="get">
+    <select name="type" onchange="this.form.submit()">
+      <option value="">All types</option>
+      {% for value, label in types %}
+        <option value="{{ value }}" {% if request.GET.type == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <a class="btn primary" href="{% url 'inventory:move_create' %}">New move</a>
+</div>
+{% include "inventory/_moves_table.html" with moves=object_list %}
+{% endblock %}
