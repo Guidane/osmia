@@ -33,6 +33,9 @@ if not SECRET_KEY:
 
 ALLOWED_HOSTS = [h for h in os.environ.get('OSMIA_ALLOWED_HOSTS', '').split(',') if h]
 
+# Part lookup by part number (inventory/lookup.py). A free Mouser Search API key.
+OSMIA_MOUSER_API_KEY = os.environ.get('OSMIA_MOUSER_API_KEY', '')
+
 
 # Application definition
 

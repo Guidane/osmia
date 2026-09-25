@@ -30,7 +30,7 @@ class PartAttributeValueInline(admin.TabularInline):
 class PartAdmin(admin.ModelAdmin):
     list_display = ('part_number', 'name', 'category', 'location', 'quantity_on_hand', 'unit', 'reorder_level', 'is_active')
     list_filter = ('category', 'location', 'is_active')
-    search_fields = ('part_number', 'name', 'interconnect_family')
+    search_fields = ('part_number', 'name')
     readonly_fields = ('quantity_on_hand',)
     inlines = [PartAttributeValueInline]
 

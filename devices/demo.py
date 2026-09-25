@@ -7,9 +7,9 @@ from .models import Connector, Device, Pin
 
 
 def _pins(connector, rows):
-    """rows: (label, signal, set name)."""
-    for i, (label, signal, set_name) in enumerate(rows, start=1):
-        Pin.objects.create(connector=connector, position=i, label=label, signal=signal, set_name=set_name)
+    """rows: (label, signal)."""
+    for i, (label, signal) in enumerate(rows, start=1):
+        Pin.objects.create(connector=connector, position=i, label=label, signal=signal)
 
 
 def load():
@@ -33,10 +33,10 @@ def load():
     )
     j01 = Connector.objects.create(device=pdu, designator='J01', side='left', position=1,
                                    part=parts.get('DB25-F'), description='Power in')
-    _pins(j01, [('1', 'PWR', 'Set 1'), ('13', 'GND', 'Set 1'), ('2', 'PWR', 'Set 2'), ('14', 'GND', 'Set 2')])
+    _pins(j01, [('1', 'PWR'), ('13', 'GND'), ('2', 'PWR'), ('14', 'GND')])
     j02 = Connector.objects.create(device=pdu, designator='J02', side='right', position=2,
                                    part=parts.get('DB25-F'), description='Control bus')
-    _pins(j02, [('1', 'CAN_H', 'CAN'), ('2', 'CAN_L', 'CAN'), ('3', 'GND', '')])
+    _pins(j02, [('1', 'CAN_H'), ('2', 'CAN_L'), ('3', 'GND')])
     pdu.snapshot()
 
     # Test equipment we build to test the units.
@@ -45,7 +45,7 @@ def load():
     )
     p01 = Connector.objects.create(device=tester, designator='J01', side='left', position=1,
                                    part=parts.get('DB25-M'), description='To unit under test')
-    _pins(p01, [('1', 'CAN_H', 'CAN'), ('2', 'CAN_L', 'CAN'), ('3', 'GND', '')])
+    _pins(p01, [('1', 'CAN_H'), ('2', 'CAN_L'), ('3', 'GND')])
     tester.snapshot()
 
     # External equipment.
@@ -54,7 +54,7 @@ def load():
         manufacturer='Generic', model_number='PSU-3005', asset_tag='LAB-0042', color='#d9822b',
     )
     out = Connector.objects.create(device=psu, designator='J01', side='right', position=1, description='Output terminals')
-    _pins(out, [('+', 'PWR', 'Out'), ('-', 'GND', 'Out')])
+    _pins(out, [('+', 'PWR'), ('-', 'GND')])
     psu.snapshot()
 
     load_dev = Device.objects.create(
@@ -62,5 +62,5 @@ def load():
         manufacturer='Generic', model_number='EL-150', asset_tag='LAB-0057', color='#c0392b',
     )
     inp = Connector.objects.create(device=load_dev, designator='J01', side='left', position=1, description='Load input')
-    _pins(inp, [('+', 'PWR', 'In'), ('-', 'GND', 'In')])
+    _pins(inp, [('+', 'PWR'), ('-', 'GND')])
     load_dev.snapshot()

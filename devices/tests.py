@@ -23,7 +23,7 @@ class DeviceTests(DeviceTestCase):
     def test_definition_uses_harness_format(self):
         d = self.pdu.definition()
         self.assertEqual([c['id'] for c in d['connectors']], ['J01', 'J02'])
-        self.assertEqual(d['connectors'][0]['pins'][1], {'id': '2', 'label': '13', 'signal': 'GND', 'set': 'Set 1'})
+        self.assertEqual(d['connectors'][0]['pins'][1], {'id': '2', 'label': '13', 'signal': 'GND'})
         self.assertEqual(self.pdu.connectors.get(designator='J01').mating_designator, 'P01')
 
     def test_versions_only_on_change_and_can_be_restored(self):
@@ -58,7 +58,7 @@ class DeviceTests(DeviceTestCase):
         }
         for i, (pin, signal) in enumerate(zip(pins, ['RX', 'TX', 'GND'])):
             data.update({f'pins-{i}-id': pin.pk, f'pins-{i}-connector': j03.pk, f'pins-{i}-label': pin.label,
-                         f'pins-{i}-signal': signal, f'pins-{i}-set_name': 'UART'})
+                         f'pins-{i}-signal': signal})
         data['pins-0-DELETE'] = 'on'
         self.client.post(reverse('devices:connector_edit', args=[self.pdu.pk, j03.pk]), data)
         self.assertEqual(list(j03.pins.values_list('position', 'signal')), [(1, 'TX'), (2, 'GND')])

@@ -195,24 +195,6 @@ function getConnector(device, connectorId) {
   return device.connectors.find(c => c.id === connectorId);
 }
 
-// Orders a harness's connections so pins sharing a "set" (e.g. a DSUB PWR/GND
-// pair) are shown adjacent to each other, grouped in the order each set first
-// appears. Connections whose from-pin has no set keep their original slot.
-function orderConnectionsForDisplay(connectionsHolder, fromConnector) {
-  const meta = connectionsHolder.connections.map((conn, idx) => {
-    const pin = fromConnector.pins.find(p => p.id === conn.from_pin);
-    const setKey = pin && pin.set ? pin.set : null;
-    const key = setKey !== null ? setKey : `__solo_${idx}`;
-    return { conn, idx, key };
-  });
-  const firstSeen = new Map();
-  for (const m of meta) {
-    if (!firstSeen.has(m.key)) firstSeen.set(m.key, m.idx);
-  }
-  meta.sort((a, b) => (firstSeen.get(a.key) - firstSeen.get(b.key)) || (a.idx - b.idx));
-  return meta;
-}
-
 // A harness has ONE trunk connector (from_instance/from_connector) and one or
 // more branches fanning out to different destination connectors — all wires
 // sharing that same source connector live in a single harness. The line runs
@@ -606,7 +588,7 @@ function mousePosFromEvent(e) {
 
 // Shows a "Loop Back this connector instead" button whenever a connector is
 // pending — an alternative to clicking a second connector on the canvas, so
-// looping a set's pins back to each other doesn't need a placeholder device.
+// looping pins back to each other doesn't need a placeholder device.
 function updateLoopbackButton() {
   const btn = document.getElementById("btn-loopback-pending");
   btn.classList.toggle("hidden", !state.pendingConnectorFrom);
@@ -797,159 +779,63 @@ function makeConnection(fromPin, toPin) {
   };
 }
 
-// Groups a connector's pins into named sets (e.g. "Set 1": pins 1 & 13) plus
-// one solo group per ungrouped pin, for display in pickers and the modal.
-function connectorGroups(connector) {
-  const bySet = new Map();
-  const groups = [];
-  for (const pin of connector.pins) {
-    if (pin.set) {
-      if (!bySet.has(pin.set)) {
-        const group = { key: `set:${pin.set}`, name: pin.set, pins: [] };
-        bySet.set(pin.set, group);
-        groups.push(group);
-      }
-      bySet.get(pin.set).pins.push(pin);
-    } else {
-      groups.push({ key: `pin:${pin.id}`, name: pin.label, pins: [pin] });
-    }
-  }
-  return groups;
-}
-
-// Matches pins between two chosen groups, respecting pin availability and
-// the global signal compatibility rules (see pairAvailablePins).
-function pairPinsInGroups(fromGroup, toGroup, usedKeys, fromCtx, toCtx) {
-  return pairAvailablePins(fromGroup.pins, toGroup.pins, usedKeys, fromCtx, toCtx);
-}
-
-// Groups with at least one still-available pin, for picker dropdowns.
-function availableGroups(connector, ctx, usedKeys) {
-  return connectorGroups(connector).filter(g => g.pins.some(p => !usedKeys.has(pinKey(ctx.instanceId, ctx.connectorId, p.id))));
-}
-
-// Named sets only (drops the one-pin "groups" connectorGroups() synthesizes
-// for ungrouped/spare pins) — used to populate Set-selection dropdowns, so
-// only real sets are pickable there, not individual loose wires.
-function namedSetsOnly(groups) {
-  return groups.filter(g => g.key.startsWith("set:"));
-}
-
 function startHarnessCreation(fromConn, toConn) {
   const { existingHarness, effectiveFromConn, effectiveToConn, reroot } = resolveHarnessTarget(fromConn, toConn);
-
-  const fromInst = getInstance(effectiveFromConn.instance_id);
-  const toInst = getInstance(effectiveToConn.instance_id);
-  const fromDevice = state.devices[fromInst.device_id];
-  const toDevice = state.devices[toInst.device_id];
-  const fromConnector = getConnector(fromDevice, effectiveFromConn.connector_id);
-  const toConnector = getConnector(toDevice, effectiveToConn.connector_id);
-
-  const hasSets = fromConnector.pins.some(p => p.set) || toConnector.pins.some(p => p.set);
-  if (!hasSets) {
-    addBranchAuto(existingHarness, effectiveFromConn, effectiveToConn, fromConnector, toConnector, reroot);
-  } else {
-    openConnectModal(existingHarness, effectiveFromConn, effectiveToConn, fromConnector, toConnector, reroot);
-  }
+  const fromConnector = getConnector(state.devices[getInstance(effectiveFromConn.instance_id).device_id], effectiveFromConn.connector_id);
+  const toConnector = getConnector(state.devices[getInstance(effectiveToConn.instance_id).device_id], effectiveToConn.connector_id);
+  // Always pin to pin: every wire's two pins are picked in the connect popup.
+  openConnectModal(existingHarness, effectiveFromConn, effectiveToConn, fromConnector, toConnector, reroot);
   render();
 }
 
-// Simple case (no pin sets defined on either side): pair available,
-// signal-compatible pins, same as before — no need to bother the user with a picker.
-function addBranchAuto(existingHarness, fromConn, toConn, fromConnector, toConnector, reroot = null) {
-  const usedKeys = usedPinKeys();
-  const fromCtx = { instanceId: fromConn.instance_id, connectorId: fromConn.connector_id };
-  const toCtx = { instanceId: toConn.instance_id, connectorId: toConn.connector_id };
-  const pinPairs = pairAvailablePins(fromConnector.pins, toConnector.pins, usedKeys, fromCtx, toCtx);
-  if (pinPairs.length === 0) {
-    setStatus("No available/compatible pins left to connect");
-    return;
-  }
-  const harness = commitBranch(existingHarness, fromConn, toConn, pinPairs, reroot);
-  selectHarness(harness.id);
-  setStatus(`${existingHarness ? "Added destination to" : "Created"} ${harness.label}: ${fromConnector.id} ↔ ${toConnector.id}`);
-}
-
-// ---------- Connect Sets modal ----------
-// A live-editable table: one row per wire. Rows are rebuilt from a small data
-// model (connectPickRows) on every change, which lets the Set dropdown span
-// multiple rows (rowSpan) whenever consecutive rows share the same set —
-// picking/changing that one dropdown updates every pin row under it at once.
+// ---------- Connect modal (pin to pin) ----------
+// One row per wire: pick a pin on each side. A pin can only be used once,
+// across these rows and every wire already in the project; in a loopback a pin
+// can't loop to itself. Rows whose signals break the Signal Rules are flagged
+// and won't be created.
 
 const connectModal = document.getElementById("connect-modal");
 const connectPickBodyEl = document.getElementById("connect-pick-body");
-let connectModalState = null; // { existingHarness, fromConn, toConn, fromConnector, toConnector, fromGroups, toGroups, fromCtx, toCtx }
-let connectPickRows = [];     // [{ id, fromSetKey, fromPinId, toSetKey, toPinId }]
+let connectModalState = null; // { existingHarness, fromConn, toConn, fromConnector, toConnector, fromCtx, toCtx, reroot }
+let connectPickRows = [];     // [{ id, fromPinId, toPinId }]
 
-// Loads (or reloads, when the Unit selector changes) which from/to connector
-// pair the modal is targeting: computes available groups, seeds matching-set
-// rows, and re-renders the pick table. Shared by both entry points below.
+function isSameConnector(a, b) {
+  return a.instanceId === b.instanceId && a.connectorId === b.connectorId;
+}
+
+// Loads (or reloads, when the Destination selector changes) which from/to
+// connector pair the modal targets, and starts it with one wire.
 function applyConnectTarget(existingHarness, fromConn, toConn, fromConnector, toConnector) {
   const fromInst = getInstance(fromConn.instance_id);
   const toInst = getInstance(toConn.instance_id);
-  const fromDevice = state.devices[fromInst.device_id];
-  const toDevice = state.devices[toInst.device_id];
-  const fromName = fromInst.label || fromDevice.name;
-  const toName = toInst.label || toDevice.name;
-
-  const usedKeys = usedPinKeys();
+  const fromName = fromInst.label || state.devices[fromInst.device_id].name;
+  const toName = toInst.label || state.devices[toInst.device_id].name;
   const fromCtx = { instanceId: fromConn.instance_id, connectorId: fromConn.connector_id };
   const toCtx = { instanceId: toConn.instance_id, connectorId: toConn.connector_id };
-  const fromGroups = availableGroups(fromConnector, fromCtx, usedKeys);
-  const toGroups = availableGroups(toConnector, toCtx, usedKeys);
-  connectModalState = { existingHarness, fromConn, toConn, fromConnector, toConnector, fromGroups, toGroups, fromCtx, toCtx };
+  const reroot = connectModalState ? connectModalState.reroot : null;
+  connectModalState = { existingHarness, fromConn, toConn, fromConnector, toConnector, fromCtx, toCtx, reroot };
   connectPickRows = [];
 
-  document.getElementById("connect-modal-title").textContent =
-    `Connect ${fromName}.${fromConnector.id} → ${toName}.${toConnector.id}`;
-  document.getElementById("btn-create-connect").textContent = existingHarness ? "Add Wires" : "Create Harness";
-
-  if (fromGroups.length === 0 || toGroups.length === 0) {
-    setStatus("No available pins/sets left on one side — everything is already wired");
-    renderPickTable();
-    return;
-  }
-
-  // Auto-suggest a row per pin for groups whose names match exactly on both
-  // sides (e.g. "Set 1" <-> "Set 1"); anything else is left for the user to
-  // add manually via "+ Add Set". Skipped for a loopback (from and to are
-  // the same connector) — every group would trivially "match itself" there,
-  // including spare pins, which makes no sense to auto-pair; the user picks
-  // both sides explicitly instead.
-  const isLoopbackTarget = fromCtx.instanceId === toCtx.instanceId && fromCtx.connectorId === toCtx.connectorId;
-  let addedAny = false;
-  if (!isLoopbackTarget) {
-    const seedUsed = usedPinKeys();
-    for (const fg of fromGroups) {
-      const match = toGroups.find(tg => tg.name.toLowerCase() === fg.name.toLowerCase());
-      if (!match) continue;
-      const pairs = pairPinsInGroups(fg, match, seedUsed, fromCtx, toCtx);
-      for (const [fp, tp] of pairs) {
-        seedUsed.add(pinKey(fromCtx.instanceId, fromCtx.connectorId, fp.id));
-        seedUsed.add(pinKey(toCtx.instanceId, toCtx.connectorId, tp.id));
-        connectPickRows.push({ id: genId(), fromSetKey: fg.key, fromPinId: fp.id, toSetKey: match.key, toPinId: tp.id });
-        addedAny = true;
-      }
-    }
-  }
-  if (!addedAny) setStatus(isLoopbackTarget ? "Pick which pin/set loops to which on each side, then + Add Set" : "Pick a set on each side below and click + Add Set");
-
+  document.getElementById("connect-modal-title").textContent = isSameConnector(fromCtx, toCtx)
+    ? `Loop back ${fromName}.${fromConnector.id}`
+    : `Connect ${fromName}.${fromConnector.id} → ${toName}.${toConnector.id}`;
+  if (!addPickRow()) setStatus("No free pins left on one side — everything is already wired");
   renderPickTable();
 }
 
 // Entry point 1: clicking a source connector then a destination connector on
-// the canvas — both ends are already fixed, so there's no Unit to pick.
+// the canvas (or "Loop Back") — both ends are fixed.
 function openConnectModal(existingHarness, fromConn, toConn, fromConnector, toConnector, reroot = null) {
   document.getElementById("connect-unit-row").classList.add("hidden");
+  connectModalState = null;
   applyConnectTarget(existingHarness, fromConn, toConn, fromConnector, toConnector);
   connectModalState.reroot = reroot;  // applied only if wires are added
   connectModal.classList.remove("hidden");
 }
 
-// Entry point 2: "+ Add Set" in the drawer — the trunk side is fixed (it's
-// this harness), but which existing destination to add wires to is picked
-// via the Unit selector inside the modal.
-function openAddSetModalForHarness(harness) {
+// Entry point 2: "+ Add wires" in the drawer — the trunk side is this harness,
+// and which existing destination gets the wires is picked in the modal.
+function openAddWiresModalForHarness(harness) {
   const fromConn = { instance_id: harness.from_instance, connector_id: harness.from_connector };
   const fromInst = getInstance(harness.from_instance);
   const fromConnector = getConnector(state.devices[fromInst.device_id], harness.from_connector);
@@ -960,8 +846,9 @@ function openAddSetModalForHarness(harness) {
   for (const branch of harness.branches) {
     const toInst = getInstance(branch.to_instance);
     if (!toInst) continue;
+    const isLoop = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
     const toName = toInst.label || state.devices[toInst.device_id]?.name || "?";
-    unitSelect.appendChild(new Option(`${toName}.${branch.to_connector}`, branch.id));
+    unitSelect.appendChild(new Option(isLoop ? `↻ Loop back ${branch.to_connector}` : `${toName}.${branch.to_connector}`, branch.id));
   }
   if (unitSelect.options.length === 0) {
     setStatus("This harness has no destinations yet — connect one from the canvas first.");
@@ -976,6 +863,7 @@ function openAddSetModalForHarness(harness) {
     applyConnectTarget(harness, fromConn, toConn, fromConnector, toConnector);
   }
   unitSelect.onchange = loadSelectedUnit;
+  connectModalState = null;
   loadSelectedUnit();
 
   connectModal.classList.remove("hidden");
@@ -988,27 +876,60 @@ function closeConnectModal() {
   document.getElementById("connect-unit-row").classList.add("hidden");
 }
 
-// Pins already claimed by OTHER rows in this modal (per the data model),
-// plus everything already wired elsewhere in the project — so no two rows
-// (or an existing wire) can end up pointing at the same pin. For a loopback
-// row (from/to are the same connector), `selfPinId` additionally excludes
-// this row's OWN pin on the opposite side, so a pin can never loop to itself.
+// Pins already claimed by OTHER rows in this modal, plus everything already
+// wired elsewhere in the project. In a loopback both ends sit on the same
+// connector, so a pin used on either side of another row is taken; `selfPinId`
+// also excludes this row's own pin on the opposite side.
 function pickRowsUsedKeys(ctx, side, excludeRowId, selfPinId) {
   const used = usedPinKeys();
   if (selfPinId) used.add(pinKey(ctx.instanceId, ctx.connectorId, selfPinId));
+  const loop = isSameConnector(connectModalState.fromCtx, connectModalState.toCtx);
   for (const row of connectPickRows) {
     if (row.id === excludeRowId) continue;
-    const pinId = side === "from" ? row.fromPinId : row.toPinId;
-    if (pinId) used.add(pinKey(ctx.instanceId, ctx.connectorId, pinId));
+    const pinIds = loop ? [row.fromPinId, row.toPinId] : [side === "from" ? row.fromPinId : row.toPinId];
+    for (const pinId of pinIds) if (pinId) used.add(pinKey(ctx.instanceId, ctx.connectorId, pinId));
   }
   return used;
 }
 
-function availablePinsForRow(groups, setKey, ctx, side, excludeRowId, keepPinId, selfPinId) {
-  const group = groups.find(g => g.key === setKey);
-  if (!group) return [];
-  const used = pickRowsUsedKeys(ctx, side, excludeRowId, selfPinId);
-  return group.pins.filter(p => p.id === keepPinId || !used.has(pinKey(ctx.instanceId, ctx.connectorId, p.id)));
+function availablePins(connector, ctx, side, row, selfPinId) {
+  const used = pickRowsUsedKeys(ctx, side, row.id, selfPinId);
+  const keep = side === "from" ? row.fromPinId : row.toPinId;
+  return connector.pins.filter(p => p.id === keep || !used.has(pinKey(ctx.instanceId, ctx.connectorId, p.id)));
+}
+
+// Adds a wire using the first free pin on the from side and, on the to side,
+// the first free pin whose signal is allowed with it. Returns false (and adds
+// nothing) when either side has no free pin left.
+function addPickRow() {
+  const { fromConnector, toConnector, fromCtx, toCtx } = connectModalState;
+  const loop = isSameConnector(fromCtx, toCtx);
+  const row = { id: genId(), fromPinId: null, toPinId: null };
+  connectPickRows.push(row);
+  const fromOptions = availablePins(fromConnector, fromCtx, "from", row, null);
+  row.fromPinId = fromOptions.length ? fromOptions[0].id : null;
+  const fromPin = fromConnector.pins.find(p => p.id === row.fromPinId);
+  const toOptions = availablePins(toConnector, toCtx, "to", row, loop ? row.fromPinId : null);
+  const match = toOptions.find(p => fromPin && signalsCompatible(fromPin.signal, p.signal)) || toOptions[0];
+  row.toPinId = match ? match.id : null;
+  if (!row.fromPinId || !row.toPinId) {
+    connectPickRows = connectPickRows.filter(r => r !== row);
+    return false;
+  }
+  return true;
+}
+
+function rowPins(row) {
+  const { fromConnector, toConnector } = connectModalState;
+  return {
+    fromPin: fromConnector.pins.find(p => p.id === row.fromPinId) || null,
+    toPin: toConnector.pins.find(p => p.id === row.toPinId) || null,
+  };
+}
+
+function rowIsCompatible(row) {
+  const { fromPin, toPin } = rowPins(row);
+  return !fromPin || !toPin || signalsCompatible(fromPin.signal, toPin.signal);
 }
 
 function updateCreateConnectButton() {
@@ -1019,101 +940,47 @@ function updateCreateConnectButton() {
   btn.textContent = count > 0 ? `${base} (${count} wire${count === 1 ? "" : "s"})` : base;
 }
 
-// Once every pin of a set is already used by a row in the table (or already
-// wired elsewhere in the project), that set drops out of the "+ Add Set"
-// dropdowns entirely — picking it again would have nothing left to add.
-function refreshAddSetOptions() {
-  const { fromGroups, toGroups, fromCtx, toCtx } = connectModalState;
-  const usedKeys = usedPinKeys();
-  for (const row of connectPickRows) {
-    if (row.fromPinId) usedKeys.add(pinKey(fromCtx.instanceId, fromCtx.connectorId, row.fromPinId));
-    if (row.toPinId) usedKeys.add(pinKey(toCtx.instanceId, toCtx.connectorId, row.toPinId));
-  }
+function pinOptionLabel(pin) {
+  return pin.signal ? `${pin.label} · ${pin.signal}` : pin.label;
+}
 
-  function refill(select, groups, ctx) {
-    const prevValue = select.value;
-    select.innerHTML = "";
-    for (const g of groups) {
-      const stillAvailable = g.pins.some(p => !usedKeys.has(pinKey(ctx.instanceId, ctx.connectorId, p.id)));
-      if (stillAvailable) select.appendChild(new Option(g.name, g.key));
-    }
-    if ([...select.options].some(o => o.value === prevValue)) select.value = prevValue;
+function pickPinSelect(options, value, onChange) {
+  const select = document.createElement("select");
+  if (options.length === 0) {
+    select.appendChild(new Option("— none —", ""));
+    select.disabled = true;
+  } else {
+    for (const p of options) select.appendChild(new Option(pinOptionLabel(p), p.id));
+    select.value = value || "";
   }
-
-  refill(document.getElementById("add-set-from"), namedSetsOnly(fromGroups), fromCtx);
-  refill(document.getElementById("add-set-to"), namedSetsOnly(toGroups), toCtx);
+  select.onchange = () => onChange(select.value || null);
+  return select;
 }
 
 function renderPickTable() {
-  const { fromGroups, toGroups, fromCtx, toCtx } = connectModalState;
-  const sameConnector = fromCtx.instanceId === toCtx.instanceId && fromCtx.connectorId === toCtx.connectorId;
-  refreshAddSetOptions();
+  const { fromConnector, toConnector, fromCtx, toCtx } = connectModalState;
+  const loop = isSameConnector(fromCtx, toCtx);
   connectPickBodyEl.innerHTML = "";
 
   if (connectPickRows.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 7;
+    td.colSpan = 6;
     td.className = "no-rows";
-    td.textContent = "No wires yet — pick a set on each side below and click + Add Set.";
+    td.textContent = "No wires yet — click + Add wire.";
     tr.appendChild(td);
     connectPickBodyEl.appendChild(tr);
     updateCreateConnectButton();
     return;
   }
 
-  // Consecutive rows sharing the same set key get one merged (rowSpan) Set
-  // dropdown instead of repeating it — computed fresh from the array each
-  // render, so add/remove/reassign always regroups correctly.
-  function spanStarts(keyOf) {
-    const starts = {};
-    for (let i = 0; i < connectPickRows.length; i++) {
-      if (i > 0 && keyOf(connectPickRows[i]) === keyOf(connectPickRows[i - 1])) continue;
-      let j = i + 1;
-      while (j < connectPickRows.length && keyOf(connectPickRows[j]) === keyOf(connectPickRows[i])) j++;
-      starts[i] = j - i;
-    }
-    return starts;
-  }
-  const fromSpans = spanStarts(r => r.fromSetKey);
-  const toSpans = spanStarts(r => r.toSetKey);
-
-  function setSelectCell(groups, span, currentKey, onSelect) {
-    const td = document.createElement("td");
-    if (!span) return null;
-    const sel = document.createElement("select");
-    const options = namedSetsOnly(groups);
-    // Keep the current selection choosable even if it's a loose pin from
-    // before this row's set was last picked — just don't offer it anew.
-    if (!options.some(g => g.key === currentKey)) {
-      const current = groups.find(g => g.key === currentKey);
-      if (current) options.push(current);
-    }
-    for (const g of options) sel.appendChild(new Option(g.name, g.key));
-    sel.value = currentKey;
-    sel.onchange = () => onSelect(sel.value);
-    td.appendChild(sel);
-    if (span > 1) td.rowSpan = span;
-    return td;
-  }
-
-  connectPickRows.forEach((rowData, idx) => {
+  for (const row of connectPickRows) {
     const tr = document.createElement("tr");
-
-    const fromSetTd = setSelectCell(fromGroups, fromSpans[idx], rowData.fromSetKey, (newKey) => {
-      const span = fromSpans[idx];
-      for (let k = idx; k < idx + span; k++) {
-        connectPickRows[k].fromSetKey = newKey;
-        connectPickRows[k].fromPinId = null;
-      }
-      renderPickTable();
-    });
-    if (fromSetTd) tr.appendChild(fromSetTd);
-
-    const fromGroup = fromGroups.find(g => g.key === rowData.fromSetKey);
-    const fromPinOptions = availablePinsForRow(fromGroups, rowData.fromSetKey, fromCtx, "from", rowData.id, rowData.fromPinId, sameConnector ? rowData.toPinId : null);
-    if (!rowData.fromPinId && fromPinOptions.length > 0) rowData.fromPinId = fromPinOptions[0].id;
-    const fromPin = fromGroup && fromGroup.pins.find(p => p.id === rowData.fromPinId);
+    const { fromPin, toPin } = rowPins(row);
+    if (!rowIsCompatible(row)) {
+      tr.className = "pick-bad";
+      tr.title = `${fromPin.signal} ↔ ${toPin.signal} is not allowed by the Signal Rules`;
+    }
 
     const fromSigTd = document.createElement("td");
     fromSigTd.className = "pick-signal";
@@ -1121,34 +988,22 @@ function renderPickTable() {
     tr.appendChild(fromSigTd);
 
     const fromPinTd = document.createElement("td");
-    const fromPinSel = document.createElement("select");
-    if (fromPinOptions.length === 0) {
-      fromPinSel.appendChild(new Option("— none —", ""));
-      fromPinSel.disabled = true;
-    } else {
-      for (const p of fromPinOptions) fromPinSel.appendChild(new Option(p.label, p.id));
-      fromPinSel.value = rowData.fromPinId || "";
-    }
-    fromPinSel.onchange = () => { rowData.fromPinId = fromPinSel.value; renderPickTable(); };
-    fromPinTd.appendChild(fromPinSel);
+    fromPinTd.appendChild(pickPinSelect(
+      availablePins(fromConnector, fromCtx, "from", row, loop ? row.toPinId : null), row.fromPinId,
+      (v) => { row.fromPinId = v; renderPickTable(); },
+    ));
     tr.appendChild(fromPinTd);
 
-    const toGroup = toGroups.find(g => g.key === rowData.toSetKey);
-    const toPinOptions = availablePinsForRow(toGroups, rowData.toSetKey, toCtx, "to", rowData.id, rowData.toPinId, sameConnector ? rowData.fromPinId : null);
-    if (!rowData.toPinId && toPinOptions.length > 0) rowData.toPinId = toPinOptions[0].id;
-    const toPin = toGroup && toGroup.pins.find(p => p.id === rowData.toPinId);
+    const arrowTd = document.createElement("td");
+    arrowTd.className = "pick-arrow";
+    arrowTd.textContent = loop ? "↻" : "→";
+    tr.appendChild(arrowTd);
 
     const toPinTd = document.createElement("td");
-    const toPinSel = document.createElement("select");
-    if (toPinOptions.length === 0) {
-      toPinSel.appendChild(new Option("— none —", ""));
-      toPinSel.disabled = true;
-    } else {
-      for (const p of toPinOptions) toPinSel.appendChild(new Option(p.label, p.id));
-      toPinSel.value = rowData.toPinId || "";
-    }
-    toPinSel.onchange = () => { rowData.toPinId = toPinSel.value; renderPickTable(); };
-    toPinTd.appendChild(toPinSel);
+    toPinTd.appendChild(pickPinSelect(
+      availablePins(toConnector, toCtx, "to", row, loop ? row.fromPinId : null), row.toPinId,
+      (v) => { row.toPinId = v; renderPickTable(); },
+    ));
     tr.appendChild(toPinTd);
 
     const toSigTd = document.createElement("td");
@@ -1156,56 +1011,60 @@ function renderPickTable() {
     toSigTd.textContent = (toPin && toPin.signal) || "—";
     tr.appendChild(toSigTd);
 
-    const toSetTd = setSelectCell(toGroups, toSpans[idx], rowData.toSetKey, (newKey) => {
-      const span = toSpans[idx];
-      for (let k = idx; k < idx + span; k++) {
-        connectPickRows[k].toSetKey = newKey;
-        connectPickRows[k].toPinId = null;
-      }
-      renderPickTable();
-    });
-    if (toSetTd) tr.appendChild(toSetTd);
-
     const tdDel = document.createElement("td");
     const delBtn = document.createElement("button");
     delBtn.type = "button";
     delBtn.className = "mapping-remove";
     delBtn.textContent = "✕";
-    delBtn.onclick = () => { connectPickRows = connectPickRows.filter(r => r.id !== rowData.id); renderPickTable(); };
+    delBtn.title = "Remove this wire";
+    delBtn.onclick = () => { connectPickRows = connectPickRows.filter(r => r.id !== row.id); renderPickTable(); };
     tdDel.appendChild(delBtn);
     tr.appendChild(tdDel);
 
     connectPickBodyEl.appendChild(tr);
-  });
+  }
 
   updateCreateConnectButton();
 }
 
-// "+ Add Set": explicitly pick which set on each side to add, rather than
-// defaulting to the first set every time (which used to make every new row
-// collide with — and merge into — whatever already sat in "Set 1").
-document.getElementById("btn-add-mapping").onclick = () => {
-  const { fromGroups, toGroups, fromCtx, toCtx } = connectModalState;
-  const fromKey = document.getElementById("add-set-from").value;
-  const toKey = document.getElementById("add-set-to").value;
-  const fromGroup = fromGroups.find(g => g.key === fromKey);
-  const toGroup = toGroups.find(g => g.key === toKey);
-  if (!fromGroup || !toGroup) return;
+document.getElementById("btn-add-wire").onclick = () => {
+  if (!addPickRow()) setStatus("No free pins left on one side");
+  renderPickTable();
+};
 
-  const usedKeys = usedPinKeys();
+// A pairing counts as a match for auto-matching only when both pins have a
+// signal and the Signal Rules allow it; blank signals are left for manual picks.
+function signalsHaveMatch(sigA, sigB) {
+  if (!sigA || !sigB) return false;
+  if (!signalHasRules(sigA) && !signalHasRules(sigB)) return sigA.trim().toUpperCase() === sigB.trim().toUpperCase();
+  return signalsCompatible(sigA, sigB);
+}
+
+// Optional helper: pair every still-free pin whose signal matches, e.g.
+// PWR ↔ PWR and GND ↔ GND. Anything it can't match is left for manual picks.
+document.getElementById("btn-auto-match").onclick = () => {
+  const { fromConnector, toConnector, fromCtx, toCtx } = connectModalState;
+  const loop = isSameConnector(fromCtx, toCtx);
+  const used = usedPinKeys();
   for (const row of connectPickRows) {
-    if (row.fromPinId) usedKeys.add(pinKey(fromCtx.instanceId, fromCtx.connectorId, row.fromPinId));
-    if (row.toPinId) usedKeys.add(pinKey(toCtx.instanceId, toCtx.connectorId, row.toPinId));
+    if (row.fromPinId) used.add(pinKey(fromCtx.instanceId, fromCtx.connectorId, row.fromPinId));
+    if (row.toPinId) used.add(pinKey(toCtx.instanceId, toCtx.connectorId, row.toPinId));
   }
-
-  const pairs = pairPinsInGroups(fromGroup, toGroup, usedKeys, fromCtx, toCtx);
-  if (pairs.length === 0) {
-    setStatus(`No available/compatible pins left between ${fromGroup.name} and ${toGroup.name}`);
-    return;
+  const freeFrom = fromConnector.pins.filter(p => !used.has(pinKey(fromCtx.instanceId, fromCtx.connectorId, p.id)));
+  const takenTo = new Set();
+  let added = 0;
+  for (const fp of freeFrom) {
+    if (loop && takenTo.has(fp.id)) continue;
+    const tp = toConnector.pins.find(p =>
+      !used.has(pinKey(toCtx.instanceId, toCtx.connectorId, p.id)) && !takenTo.has(p.id)
+      && !(loop && (p.id === fp.id)) && signalsHaveMatch(fp.signal, p.signal));
+    if (!tp) continue;
+    takenTo.add(tp.id);
+    if (loop) { takenTo.add(fp.id); used.add(pinKey(fromCtx.instanceId, fromCtx.connectorId, tp.id)); }
+    connectPickRows.push({ id: genId(), fromPinId: fp.id, toPinId: tp.id });
+    added += 1;
   }
-  for (const [fp, tp] of pairs) {
-    connectPickRows.push({ id: genId(), fromSetKey: fromKey, fromPinId: fp.id, toSetKey: toKey, toPinId: tp.id });
-  }
+  setStatus(added ? `Matched ${added} wire${added === 1 ? "" : "s"} by signal` : "No more free pins with matching signals");
   renderPickTable();
 };
 document.getElementById("btn-cancel-connect").onclick = () => closeConnectModal();
@@ -1223,6 +1082,11 @@ document.getElementById("btn-create-connect").onclick = () => {
 
   if (pinPairs.length === 0) {
     alert("Pick at least one pin on both sides for a wire.");
+    return;
+  }
+  const bad = connectPickRows.filter(r => r.fromPinId && r.toPinId && !rowIsCompatible(r));
+  if (bad.length) {
+    alert(`${bad.length} wire${bad.length === 1 ? " connects signals" : "s connect signals"} the Signal Rules don't allow (shown in red). Change or remove ${bad.length === 1 ? "it" : "them"} first.`);
     return;
   }
 
@@ -1294,7 +1158,8 @@ function placeDevice(deviceId, x, y) {
 
   state.project.instances.push(instance);
   state.pendingPlaceDeviceId = null;
-  document.querySelectorAll(".device-card").forEach(el => el.classList.remove("selected"));
+  document.getElementById("device-select").value = "";
+  updateDeviceButtons();
   selectInstance(instance.instance_id);
   setStatus(`Placed ${instance.label || device.name}`);
 }
@@ -1341,91 +1206,45 @@ function selectNone() {
   hideDrawer();
 }
 
+// The selected device or harness is edited in the bar above the canvas.
 function renderProps() {
-  const body = document.getElementById("props-body");
-  body.innerHTML = "";
+  const bar = document.getElementById("selection-bar");
+  bar.innerHTML = "";
 
   if (state.selectedInstance) {
     const inst = getInstance(state.selectedInstance);
     const device = state.devices[inst.device_id];
-
-    body.appendChild(mkInput("Instance Label", inst.label || "", (v) => { inst.label = v; render(); }));
-
-    const info = document.createElement("p");
+    bar.appendChild(mkInput("Label", inst.label || "", (v) => { inst.label = v; render(); renderHarnessList(); }));
+    const info = document.createElement("span");
     info.className = "hint";
-    info.textContent = `${device.name} (${device.part_number || "no P/N"}) — ${device.connectors.length} connector(s)`;
-    body.appendChild(info);
-
+    info.textContent = `${device.name}${device.part_number ? " · " + device.part_number : ""}`;
+    bar.appendChild(info);
     const delBtn = document.createElement("button");
-    delBtn.textContent = "Delete Instance";
+    delBtn.type = "button";
+    delBtn.textContent = "Delete device";
     delBtn.className = "danger";
     delBtn.onclick = () => deleteInstance(inst.instance_id);
-    body.appendChild(delBtn);
+    bar.appendChild(delBtn);
     return;
   }
 
   if (state.selectedHarness) {
     const harness = getHarness(state.selectedHarness);
-    const fromInst = getInstance(harness.from_instance);
-    const fromDevice = fromInst ? state.devices[fromInst.device_id] : null;
-    const fromName = fromInst ? (fromInst.label || fromDevice.name) : "?";
-    const totalWires = harness.branches.reduce((n, b) => n + b.connections.length, 0);
-
-    body.appendChild(mkInput("Harness Label", harness.label || "", (v) => { harness.label = v; render(); renderHarnessList(); renderDrawer(); }));
-    body.appendChild(mkInput("Trunk Connector Name", harness.from_harness_connector || "", (v) => { harness.from_harness_connector = v; render(); renderDrawer(); }));
-
-    const info = document.createElement("p");
-    info.className = "hint";
-    info.textContent = `${fromName}.${harness.from_connector} — ${harness.branches.length} destination(s), ${totalWires} wire(s). Full pinout below.`;
-    body.appendChild(info);
-
-    body.appendChild(verifyCheckboxRow(
-      `Verified by ${userName(fromDevice && fromDevice.responsible_user_id)} (${fromName})`,
-      !!harness.from_verified,
-      (checked) => { harness.from_verified = checked; }
-    ));
-
-    const branchLabel = document.createElement("label");
-    branchLabel.textContent = "Destinations";
-    body.appendChild(branchLabel);
-    for (const branch of harness.branches) {
-      const toInst = getInstance(branch.to_instance);
-      if (!toInst) continue;
-      const toDevice = state.devices[toInst.device_id];
-      const toName = toInst.label || toDevice?.name || "?";
-      const row = document.createElement("div");
-      row.className = "branch-mini-row";
-      const text = document.createElement("span");
-      const isLoopbackBranch = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
-      const loopSuffix = isLoopbackBranch ? " ↻" : "";
-      text.textContent = `${toName}.${branch.to_connector} (${branch.connections.length})${loopSuffix}`;
-      const rmBtn = document.createElement("button");
-      rmBtn.textContent = "✕";
-      rmBtn.title = "Remove this destination";
-      rmBtn.onclick = () => deleteBranch(harness, branch.id);
-      row.appendChild(text);
-      row.appendChild(rmBtn);
-      body.appendChild(row);
-
-      body.appendChild(verifyCheckboxRow(
-        `Verified by ${userName(toDevice && toDevice.responsible_user_id)}`,
-        !!branch.to_verified,
-        (checked) => { branch.to_verified = checked; }
-      ));
-    }
-
+    bar.appendChild(mkInput("Harness", harness.label || "", (v) => { harness.label = v; render(); renderHarnessList(); renderDrawer(); }));
+    bar.appendChild(mkInput("Trunk plug", harness.from_harness_connector || "", (v) => { harness.from_harness_connector = v; render(); renderDrawer(); }));
     const delBtn = document.createElement("button");
-    delBtn.textContent = "Delete Whole Harness";
+    delBtn.type = "button";
+    delBtn.textContent = "Delete harness";
     delBtn.className = "danger";
     delBtn.onclick = () => deleteHarness(harness.id);
-    body.appendChild(delBtn);
+    bar.appendChild(delBtn);
     return;
   }
 
-  const hint = document.createElement("p");
+  const hint = document.createElement("span");
   hint.className = "hint";
   hint.textContent = "Select a device or harness on the canvas.";
-  body.appendChild(hint);
+  bar.appendChild(hint);
 }
 
 function mkInput(labelText, value, onChange) {
@@ -1450,32 +1269,25 @@ function verifyCheckboxRow(labelText, checked, onChange) {
   return label;
 }
 
+// The harness dropdown in the bar above the canvas.
 function renderHarnessList() {
-  const list = document.getElementById("harness-list");
-  list.innerHTML = "";
+  const select = document.getElementById("harness-select");
+  select.innerHTML = "";
+  select.appendChild(new Option(state.project.harnesses.length ? "Choose a harness…" : "No harnesses yet", ""));
   for (const harness of state.project.harnesses) {
     const fromInst = getInstance(harness.from_instance);
     if (!fromInst) continue;
-    const row = document.createElement("div");
-    row.className = "harness-row";
-    if (harness.id === state.selectedHarness) row.style.background = "#eaf1fd";
     const fromName = fromInst.label || state.devices[fromInst.device_id]?.name || "?";
     const totalWires = harness.branches.reduce((n, b) => n + b.connections.length, 0);
-    const destNames = harness.branches.map(b => {
-      const toInst = getInstance(b.to_instance);
-      return toInst ? (toInst.label || state.devices[toInst.device_id]?.name || "?") : "?";
-    }).join(", ");
-    row.innerHTML = `<div>${harness.label || "H"}: ${escapeHtml(fromName)}.${escapeHtml(harness.from_connector)} → ${escapeHtml(destNames)}</div><div class="h-count">${harness.branches.length} dest, ${totalWires} wire(s)</div>`;
-    row.onclick = () => selectHarness(harness.id);
-    list.appendChild(row);
+    select.appendChild(new Option(`${harness.label || "H"}: ${fromName}.${harness.from_connector} · ${harness.branches.length} dest, ${totalWires} wire(s)`, harness.id));
   }
-  if (state.project.harnesses.length === 0) {
-    const hint = document.createElement("p");
-    hint.className = "hint";
-    hint.textContent = "No harnesses yet.";
-    list.appendChild(hint);
-  }
+  select.value = state.selectedHarness || "";
 }
+
+document.getElementById("harness-select").onchange = (e) => {
+  if (e.target.value) selectHarness(e.target.value);
+  else { selectNone(); render(); }
+};
 
 // ---------- Bottom drawer: dense pinout table ----------
 
@@ -1503,9 +1315,8 @@ function renderDrawer() {
   const tbody = document.getElementById("conn-table-body");
   tbody.innerHTML = "";
 
-  // Sub-headers sit right above the Pin/To columns they describe. Text is
-  // only rendered when it changes from whatever was shown last — a blank
-  // cell means "still the same connector as above."
+  // Sub-headers sit right above the Pin columns they describe; a blank cell
+  // means "still the same connector as above."
   let lastFromHeaderText = null;
   let lastToHeaderText = null;
 
@@ -1525,13 +1336,19 @@ function renderDrawer() {
     headerTr.className = "branch-header-row";
 
     const leadTd = document.createElement("td");
-    leadTd.colSpan = 3; // Owner(from), Verify(from), Set(from)
+    leadTd.colSpan = 2; // Owner(from), Verify(from)
+    if (branch === harness.branches[0]) {
+      leadTd.appendChild(connectorVerifyLabel(
+        `Plug ${harness.from_harness_connector || ""} on ${fromName}.${harness.from_connector} checked by ${userName(fromDevice && fromDevice.responsible_user_id)}`,
+        !!harness.from_verified, (checked) => { harness.from_verified = checked; },
+      ));
+    }
     headerTr.appendChild(leadTd);
 
     const fromHeadTd = document.createElement("td");
     fromHeadTd.className = "sub-header-cell";
     if (fromHeaderText !== lastFromHeaderText) {
-      fromHeadTd.innerHTML = `<strong>${escapeHtml(fromHeaderText)}</strong>`;
+      fromHeadTd.innerHTML = `<strong>${escapeHtml(fromHeaderText)}</strong>${connectorPartHtml(fromConnector)}`;
       lastFromHeaderText = fromHeaderText;
     }
     headerTr.appendChild(fromHeadTd);
@@ -1539,13 +1356,19 @@ function renderDrawer() {
     const toHeadTd = document.createElement("td");
     toHeadTd.className = "sub-header-cell";
     if (toHeaderText !== lastToHeaderText) {
-      toHeadTd.innerHTML = `<strong>${escapeHtml(toHeaderText)}</strong>`;
+      toHeadTd.innerHTML = `<strong>${escapeHtml(toHeaderText)}</strong>${isLoopback ? "" : connectorPartHtml(toConnector)}`;
       lastToHeaderText = toHeaderText;
     }
     headerTr.appendChild(toHeadTd);
 
     const trailTd = document.createElement("td");
-    trailTd.colSpan = 6; // Set(to), Verify(to), Owner(to), Type, AWG, Length
+    trailTd.colSpan = 5; // Verify(to), Owner(to), Wire type, AWG, Length
+    if (!isLoopback) {
+      trailTd.appendChild(connectorVerifyLabel(
+        `Plug ${branch.to_harness_connector || ""} on ${toName}.${branch.to_connector} checked by ${userName(toDevice && toDevice.responsible_user_id)}`,
+        !!branch.to_verified, (checked) => { branch.to_verified = checked; },
+      ));
+    }
     headerTr.appendChild(trailTd);
 
     const headerActionTd = document.createElement("td");
@@ -1558,25 +1381,7 @@ function renderDrawer() {
     headerTr.appendChild(headerActionTd);
     tbody.appendChild(headerTr);
 
-    const ordered = orderConnectionsForDisplay({ connections: branch.connections }, fromConnector);
-
-    // Rows sharing the same set key sit adjacent (orderConnectionsForDisplay
-    // already groups them) — merge their Set Name and Set Type cells into one
-    // spanning cell each, instead of repeating per pin's row. Set Type is a
-    // property of the whole set/pair, so changing it applies to every
-    // connection in that group at once.
-    const keyCounts = {};
-    const keyMembers = {};
-    ordered.forEach(item => {
-      keyCounts[item.key] = (keyCounts[item.key] || 0) + 1;
-      (keyMembers[item.key] = keyMembers[item.key] || []).push(item.conn);
-    });
-    let lastKey = null;
-
-    ordered.forEach((item) => {
-      const conn = item.conn;
-      const isGroupStart = item.key !== lastKey;
-      if (isGroupStart) lastKey = item.key;
+    for (const conn of branch.connections) {
       const tr = document.createElement("tr");
 
       const tdFromOwner = document.createElement("td");
@@ -1593,38 +1398,17 @@ function renderDrawer() {
       tdFromVerify.appendChild(fromVerifyInput);
       tr.appendChild(tdFromVerify);
 
-      if (isGroupStart) {
-        const tdSet = document.createElement("td");
-        const fromPinDef = fromConnector.pins.find(p => p.id === conn.from_pin);
-        tdSet.textContent = (fromPinDef && fromPinDef.set) || "—";
-        tdSet.className = "conn-set";
-        tdSet.rowSpan = keyCounts[item.key];
-        tr.appendChild(tdSet);
-      }
-
       tr.appendChild(pinSelectCell(fromConnector, fromCtx, conn.from_pin, usedKeys, (v) => { conn.from_pin = v; }));
+      tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
 
       if (isLoopback) {
-        // No real destination device to show — just a jumper. Show one
-        // merged cell spanning the set's rows with a vertical line, to
-        // indicate this pin loops to the other pin(s) in its set.
-        if (isGroupStart) {
-          const tdLoop = document.createElement("td");
-          tdLoop.colSpan = 4; // Pin(to), Set(to), Verify(to), Owner(to)
-          tdLoop.className = "loop-indicator-cell";
-          tdLoop.rowSpan = keyCounts[item.key];
-          tdLoop.innerHTML = '<span class="loop-line" title="Loops to the other pin in this set"></span>';
-          tr.appendChild(tdLoop);
-        }
+        // Both ends are on the trunk connector: one owner, verified once.
+        const tdLoop = document.createElement("td");
+        tdLoop.colSpan = 2; // Verify(to), Owner(to)
+        tdLoop.className = "loop-indicator-cell";
+        tdLoop.textContent = "↻ loop back";
+        tr.appendChild(tdLoop);
       } else {
-        tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
-
-        const tdToSet = document.createElement("td");
-        const toPinDef = toConnector.pins.find(p => p.id === conn.to_pin);
-        tdToSet.textContent = (toPinDef && toPinDef.set) || "—";
-        tdToSet.className = "conn-set";
-        tr.appendChild(tdToSet);
-
         const tdToVerify = document.createElement("td");
         const toVerifyInput = document.createElement("input");
         toVerifyInput.type = "checkbox";
@@ -1640,19 +1424,13 @@ function renderDrawer() {
         tr.appendChild(tdToOwner);
       }
 
-      if (isGroupStart) {
-        const groupMembers = keyMembers[item.key];
-        const tdType = document.createElement("td");
-        const typeSelect = document.createElement("select");
-        for (const [value, label] of WIRE_TYPES) typeSelect.appendChild(new Option(label, value));
-        typeSelect.value = (groupMembers[0] && groupMembers[0].wire_type) || "none";
-        typeSelect.onchange = () => {
-          for (const member of groupMembers) member.wire_type = typeSelect.value;
-        };
-        tdType.rowSpan = keyCounts[item.key];
-        tdType.appendChild(typeSelect);
-        tr.appendChild(tdType);
-      }
+      const tdType = document.createElement("td");
+      const typeSelect = document.createElement("select");
+      for (const [value, label] of WIRE_TYPES) typeSelect.appendChild(new Option(label, value));
+      typeSelect.value = conn.wire_type || "none";
+      typeSelect.onchange = () => { conn.wire_type = typeSelect.value; };
+      tdType.appendChild(typeSelect);
+      tr.appendChild(tdType);
 
       const tdAwg = document.createElement("td");
       const awgInput = document.createElement("input");
@@ -1682,7 +1460,7 @@ function renderDrawer() {
       tr.appendChild(tdDel);
 
       tbody.appendChild(tr);
-    });
+    }
   }
 
   renderAddConnRow(harness);
@@ -1708,34 +1486,46 @@ function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
   return td;
 }
 
-// Same "Add Set" pattern as the Connect Sets popup: pick a branch, then an
-// explicit set (or spare pin) on each side, and add it — rather than a
-// single ad-hoc pin pair. A spare/ungrouped pin is just its own 1-pin group,
-// so picking a lone pin still works the same way it always did.
-// Opens the Connect Sets popup (with a Unit selector for which destination
-// to add to) instead of picking sets inline in the drawer.
+// Opens the connect popup, with a Destination selector for which branch of
+// this harness gets the new wires.
+// The connector's part under its name in the table: part number (a link to
+// the Part page in Osmia) and type, e.g. "DB25-F · D-sub 25 (female)".
+function connectorPartHtml(connector) {
+  const part = connector && connector.part;
+  if (!part) return `<div class="conn-part muted">no connector part set</div>`;
+  const type = part.type && part.type !== part.part_number ? ` · ${escapeHtml(part.type)}` : "";
+  return `<div class="conn-part"><a href="${escapeHtml(part.url)}" target="_blank" title="Open ${escapeHtml(part.part_number)} in Osmia">${escapeHtml(part.part_number)}</a>${type}</div>`;
+}
+
+function connectorVerifyLabel(title, checked, onChange) {
+  const label = verifyCheckboxRow("plug verified", checked, onChange);
+  label.className = "conn-verify-label";
+  label.title = title;
+  return label;
+}
+
 function renderAddConnRow(harness) {
   const container = document.getElementById("add-conn-row");
   container.innerHTML = "";
   if (harness.branches.length === 0) return;
 
   const addBtn = document.createElement("button");
-  addBtn.textContent = "+ Add Set";
-  addBtn.onclick = () => openAddSetModalForHarness(harness);
+  addBtn.textContent = "+ Add wires";
+  addBtn.onclick = () => openAddWiresModalForHarness(harness);
   container.appendChild(addBtn);
 }
 
 document.getElementById("btn-close-drawer").onclick = () => selectNone();
 
 // ---------- CSV export of the harness table ----------
-// One row per wire, in the same order as the table (sets kept together), with
+// One row per wire, in the same order as the table, with
 // both ends spelled out so the file stands on its own in a spreadsheet. Uses
 // the harness as it is on screen, including edits that aren't saved yet.
 
 const CSV_COLUMNS = [
   "Harness", "Destination", "Loopback",
-  "From device", "From connector", "From mating connector", "From pin", "From signal", "From set", "From owner", "From verified",
-  "To device", "To connector", "To mating connector", "To pin", "To signal", "To set", "To owner", "To verified",
+  "From device", "From connector", "From connector part", "From connector type", "From mating connector", "From pin", "From signal", "From owner", "From verified",
+  "To device", "To connector", "To connector part", "To connector type", "To mating connector", "To pin", "To signal", "To owner", "To verified",
   "Wire type", "AWG", "Length",
 ];
 
@@ -1747,6 +1537,8 @@ function harnessCsvRows(harness) {
   const pinDef = (connector, pinId) => (connector && connector.pins.find(p => p.id === pinId)) || null;
   const wireTypeLabel = value => (WIRE_TYPES.find(([v]) => v === (value || "none")) || [null, value])[1];
   const yesNo = value => (value ? "yes" : "no");
+  const partNumber = connector => (connector && connector.part ? connector.part.part_number : "");
+  const partType = connector => (connector && connector.part ? connector.part.type : "");
 
   const rows = [];
   harness.branches.forEach((branch, branchIdx) => {
@@ -1757,16 +1549,17 @@ function harnessCsvRows(harness) {
     const toName = toInst.label || toDevice.name;
     const isLoopback = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
 
-    for (const { conn } of orderConnectionsForDisplay({ connections: branch.connections }, fromConnector)) {
+    for (const conn of branch.connections) {
       const fp = pinDef(fromConnector, conn.from_pin);
       const tp = pinDef(toConnector, conn.to_pin);
       rows.push([
         harness.label || "Harness", branchIdx + 1, yesNo(isLoopback),
-        fromName, harness.from_connector, harness.from_harness_connector || "",
-        fp ? fp.label : conn.from_pin, fp ? fp.signal : "", fp ? fp.set : "",
+        fromName, harness.from_connector, partNumber(fromConnector), partType(fromConnector), harness.from_harness_connector || "",
+        fp ? fp.label : conn.from_pin, fp ? fp.signal : "",
         userName(fromDevice.responsible_user_id), yesNo(conn.from_verified),
-        toName, branch.to_connector, isLoopback ? harness.from_harness_connector || "" : branch.to_harness_connector || "",
-        tp ? tp.label : conn.to_pin, tp ? tp.signal : "", tp ? tp.set : "",
+        toName, branch.to_connector, partNumber(toConnector), partType(toConnector),
+        isLoopback ? harness.from_harness_connector || "" : branch.to_harness_connector || "",
+        tp ? tp.label : conn.to_pin, tp ? tp.signal : "",
         userName(toDevice.responsible_user_id), yesNo(isLoopback ? conn.from_verified : conn.to_verified),
         wireTypeLabel(conn.wire_type), conn.awg || "", conn.length || "",
       ]);
@@ -1814,38 +1607,47 @@ async function loadDeviceLibrary() {
   const list = await res.json();
   for (const d of list) state.devices[d.id] = d;
 
-  const container = document.getElementById("device-list");
-  container.innerHTML = "";
-  for (const d of list) {
+  const select = document.getElementById("device-select");
+  const previous = select.value;
+  select.innerHTML = "";
+  select.appendChild(new Option("Choose a device to place…", ""));
+  for (const d of [...list].sort((a, b) => a.name.localeCompare(b.name))) {
     const pinCount = d.connectors.reduce((n, c) => n + c.pins.length, 0);
-    const card = document.createElement("div");
-    card.className = "device-card";
-    card.innerHTML = `
-      <button type="button" class="dev-edit" title="Edit device">✎</button>
-      <a class="dev-open" href="${d.url}" target="_blank" title="Open in Osmia">↗</a>
-      <div class="dev-title">${escapeHtml(d.name)}</div>
-      <div class="dev-sub">${d.connectors.length} connector(s), ${pinCount} pins${d.part_number ? " · " + escapeHtml(d.part_number) : ""}</div>
-      <div class="dev-owner">Owner: ${escapeHtml(userName(d.responsible_user_id))}</div>
-      <button type="button" class="dev-version-btn" title="Version history">v${d.version}</button>
-    `;
-    card.onclick = () => {
-      document.querySelectorAll(".device-card").forEach(el => el.classList.remove("selected"));
-      card.classList.add("selected");
-      state.pendingPlaceDeviceId = d.id;
-      setStatus(`Click the canvas to place "${d.name}"`);
-    };
-    card.querySelector(".dev-open").onclick = (e) => e.stopPropagation();
-    card.querySelector(".dev-edit").onclick = (e) => {
-      e.stopPropagation();
-      openDeviceModal(d);
-    };
-    card.querySelector(".dev-version-btn").onclick = (e) => {
-      e.stopPropagation();
-      openVersionsModal("device", d.id, d.version);
-    };
-    container.appendChild(card);
+    const pn = d.part_number ? ` · ${d.part_number}` : "";
+    select.appendChild(new Option(`${d.name}${pn} — ${d.connectors.length} connector(s), ${pinCount} pins · v${d.version}`, d.id));
   }
+  if ([...select.options].some(o => o.value === previous)) select.value = previous;
+  updateDeviceButtons();
 }
+
+function selectedLibraryDevice() {
+  const id = document.getElementById("device-select").value;
+  return id ? state.devices[id] : null;
+}
+
+function updateDeviceButtons() {
+  const device = selectedLibraryDevice();
+  document.getElementById("btn-edit-device").disabled = !device;
+  document.getElementById("btn-device-versions").disabled = !device;
+  const open = document.getElementById("btn-open-device");
+  open.classList.toggle("hidden", !(device && device.url));
+  open.href = device && device.url ? device.url : "#";
+}
+
+document.getElementById("device-select").onchange = () => {
+  const device = selectedLibraryDevice();
+  state.pendingPlaceDeviceId = device ? device.id : null;
+  setStatus(device ? `Click the canvas to place "${device.name}"` : "");
+  updateDeviceButtons();
+};
+document.getElementById("btn-edit-device").onclick = () => {
+  const device = selectedLibraryDevice();
+  if (device) openDeviceModal(device);
+};
+document.getElementById("btn-device-versions").onclick = () => {
+  const device = selectedLibraryDevice();
+  if (device) openVersionsModal("device", device.id, device.version);
+};
 
 function userName(userId) {
   if (!userId) return "Unassigned";
@@ -1916,19 +1718,13 @@ function addConnectorBlock(defaultId, defaultSide, pins) {
     <div class="conn-pin-rows"></div>
     <div class="conn-pin-actions">
       <button type="button" class="conn-add-pin">+ Add Pin</button>
-      <button type="button" class="conn-add-set">+ Add Pin Set</button>
     </div>
   `;
   block.querySelector(".conn-remove").onclick = () => block.remove();
   const pinRows = block.querySelector(".conn-pin-rows");
-  block.querySelector(".conn-add-pin").onclick = () => {
-    addPinRow(pinRows, "", "");
-  };
-  block.querySelector(".conn-add-set").onclick = () => {
-    addPinSetBlock(pinRows, [{ label: "", signal: "" }, { label: "", signal: "" }], "");
-  };
+  block.querySelector(".conn-add-pin").onclick = () => addPinRow(pinRows, "", "");
   if (pins && pins.length) {
-    populatePinsIntoContainer(pinRows, pins);
+    for (const pin of pins) addPinRow(pinRows, pin.label, pin.signal);
   } else {
     addPinRow(pinRows, "1", "");
     addPinRow(pinRows, "2", "");
@@ -1936,65 +1732,12 @@ function addConnectorBlock(defaultId, defaultSide, pins) {
   connectorBlocksEl.appendChild(block);
 }
 
-// A "pin set" groups related pins (e.g. a DSUB pair: pin 1 = PWR, pin 13 = GND)
-// so they are edited and later displayed together instead of scattered by number.
-function addPinSetBlock(container, pins, setLabel) {
-  const block = document.createElement("div");
-  block.className = "pin-set";
-  block.innerHTML = `
-    <div class="pin-set-header">
-      <input type="text" class="set-label" placeholder="Set label (optional, e.g. Pair 1)" value="${escapeHtml(setLabel || "")}">
-      <button type="button" class="set-add-pin">+ Pin</button>
-      <button type="button" class="set-remove">✕ Remove Set</button>
-    </div>
-    <div class="pin-set-rows"></div>
-  `;
-  const rows = block.querySelector(".pin-set-rows");
-  block.querySelector(".set-remove").onclick = () => block.remove();
-  block.querySelector(".set-add-pin").onclick = () => addPinRow(rows, "", "");
-  for (const pin of pins) addPinRow(rows, pin.label, pin.signal);
-  container.appendChild(block);
-}
-
-// Rebuilds the editor UI from a saved pins array, re-grouping consecutive
-// pins that share the same non-empty "set" value back into a pin-set block.
-function populatePinsIntoContainer(container, pins) {
-  let i = 0;
-  while (i < pins.length) {
-    const pin = pins[i];
-    if (pin.set) {
-      const group = [pin];
-      let j = i + 1;
-      while (j < pins.length && pins[j].set === pin.set) { group.push(pins[j]); j++; }
-      addPinSetBlock(container, group, pin.set);
-      i = j;
-    } else {
-      addPinRow(container, pin.label, pin.signal);
-      i += 1;
-    }
-  }
-}
-
-// Walks a connector's pin-rows container (loose rows plus pin-set blocks, in
-// DOM order) and flattens it back into a pins array with each pin's "set" key.
+// Reads a connector's pin rows back into a pins array, numbered in order.
 function collectPinsFromContainer(container) {
-  const collected = [];
-  let autoSetCounter = 0;
-  for (const child of container.children) {
-    if (child.classList.contains("pin-row")) {
-      collected.push({ row: child, set: "" });
-    } else if (child.classList.contains("pin-set")) {
-      autoSetCounter += 1;
-      const labelInput = child.querySelector(".set-label");
-      const setId = labelInput.value.trim() || `set-${autoSetCounter}`;
-      child.querySelectorAll(".pin-row").forEach(row => collected.push({ row, set: setId }));
-    }
-  }
-  return collected.map((p, idx) => ({
+  return [...container.querySelectorAll(".pin-row")].map((row, idx) => ({
     id: String(idx + 1),
-    label: p.row.querySelector(".pin-label").value.trim() || String(idx + 1),
-    signal: p.row.querySelector(".pin-signal").value.trim(),
-    set: p.set,
+    label: row.querySelector(".pin-label").value.trim() || String(idx + 1),
+    signal: row.querySelector(".pin-signal").value.trim(),
   }));
 }
 

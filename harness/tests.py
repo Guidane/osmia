@@ -33,11 +33,11 @@ class HarnessApiTests(HarnessTestCase):
         pdu = next(d for d in devices if d['id'] == str(self.pdu.pk))
         self.assertEqual(pdu['version'], 1)
         self.assertEqual([c['id'] for c in pdu['connectors']], ['J01', 'J02'])
-        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR', 'set': 'Set 1'}, pdu['connectors'][0]['pins'])
+        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR'}, pdu['connectors'][0]['pins'])
 
     def test_designer_device_editor_saves_new_version(self):
         data = self.client.get(f'{self.api}/devices/{self.pdu.pk}').json()
-        data['connectors'][1]['pins'].append({'id': '4', 'label': '4', 'signal': 'SHIELD', 'set': ''})
+        data['connectors'][1]['pins'].append({'id': '4', 'label': '4', 'signal': 'SHIELD'})
         saved = self.post_json('/devices', data).json()
         self.assertEqual(saved['version'], 2)
         self.assertEqual(self.pdu.connectors.get(designator='J02').pins.count(), 4)
@@ -51,7 +51,7 @@ class HarnessApiTests(HarnessTestCase):
     def test_new_external_device_from_designer(self):
         saved = self.post_json('/devices', {
             'name': 'Scope', 'part_number': '', 'color': '#123456', 'responsible_user_id': None, 'origin': 'external',
-            'connectors': [{'id': 'CH1', 'side': 'left', 'pins': [{'id': '1', 'label': 'SIG', 'signal': 'SENSE', 'set': ''}]}],
+            'connectors': [{'id': 'CH1', 'side': 'left', 'pins': [{'id': '1', 'label': 'SIG', 'signal': 'SENSE'}]}],
         }).json()
         device = Device.objects.get(pk=saved['id'])
         self.assertTrue(device.is_external)
@@ -124,7 +124,7 @@ class ImportTests(TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(data), encoding='utf-8')
 
-            conn = lambda sig: [{'id': 'J1', 'side': 'right', 'pins': [{'id': '1', 'label': '1', 'signal': sig, 'set': ''}]}]
+            conn = lambda sig: [{'id': 'J1', 'side': 'right', 'pins': [{'id': '1', 'label': '1', 'signal': sig}]}]
             write('devices/ecu/1.json', {'name': 'ECU', 'part_number': 'E-1', 'color': '#111111', 'connectors': conn('GND')})
             write('devices/ecu/2.json', {'name': 'ECU', 'part_number': 'E-1', 'color': '#111111',
                                          'responsible_user_id': 'u1', 'connectors': conn('PWR')})

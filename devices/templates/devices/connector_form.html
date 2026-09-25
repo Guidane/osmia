@@ -11,18 +11,17 @@
 
     <fieldset>
       <legend>Pins</legend>
-      <p class="muted">Pins are numbered in the order shown. Give pins that belong together the same pin set, e.g. a PWR and GND pair as "Set 1"; the harness designer wires sets together.</p>
+      <p class="muted">Pins are numbered in the order shown.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
       <table class="list compact">
-        <thead><tr><th class="num">#</th><th>Pin label</th><th>Signal</th><th>Pin set</th><th>Remove</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Pin label</th><th>Signal</th><th>Remove</th></tr></thead>
         <tbody id="pin-rows">
         {% for f in formset %}
           <tr>
             <td class="num muted">{{ forloop.counter }}</td>
             <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.label }}{{ f.label.errors }}</td>
             <td>{{ f.signal }}</td>
-            <td>{{ f.set_name }}</td>
             <td>{{ f.DELETE }}</td>
           </tr>
         {% empty %}

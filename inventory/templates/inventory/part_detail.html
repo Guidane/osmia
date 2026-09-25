@@ -43,23 +43,6 @@
         <p class="muted">Pick a category to get attributes.</p>
       {% endif %}
     </section>
-
-    <section class="card panel">
-      <h2>Interconnect</h2>
-      {% if part.interconnect_family %}
-        <p>{{ part.interconnect_label }}</p>
-        {% if mates %}
-          <p class="muted">Mates with:</p>
-          <ul class="plain">
-            {% for m in mates %}<li><a href="{{ m.get_absolute_url }}">{{ m }}</a> <span class="muted">{{ m.interconnect_gender|default:"unspecified" }}</span></li>{% endfor %}
-          </ul>
-        {% else %}
-          <p class="muted">No other part mates with this one.</p>
-        {% endif %}
-      {% else %}
-        <p class="muted">Not a connector.</p>
-      {% endif %}
-    </section>
   </div>
 </div>
 {% endblock %}

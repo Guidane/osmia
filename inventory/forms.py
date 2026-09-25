@@ -33,10 +33,8 @@ class PartForm(forms.ModelForm):
     class Meta:
         model = Part
         fields = [
-            'part_number', 'name', 'category', 'location', 'unit', 'cost', 'reorder_level',
-            'interconnect_family', 'interconnect_gender', 'is_active',
+            'part_number', 'name', 'category', 'location', 'unit', 'cost', 'reorder_level', 'is_active',
         ]
-        help_texts = {'interconnect_family': 'e.g. "D-sub 25". Parts in the same family can mate.'}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -51,7 +49,7 @@ class PartForm(forms.ModelForm):
             name = f'attr_{attr.pk}'
             self.fields[name] = forms.CharField(
                 label=attr.name, required=False, max_length=200, initial=current.get(attr.pk, ''),
-                widget=forms.TextInput(attrs={'placeholder': attr.default_value}),
+                widget=forms.TextInput(attrs={'placeholder': attr.default_value, 'data-attr-name': attr.name}),
             )
             if not self.attribute_groups or self.attribute_groups[-1]['category'] != attr.category:
                 self.attribute_groups.append({'category': attr.category, 'fields': []})

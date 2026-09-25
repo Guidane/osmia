@@ -39,12 +39,6 @@ class Location(TreeNode):
 
 
 class Part(models.Model):
-    class Gender(models.TextChoices):
-        NONE = '', '(unspecified)'
-        MALE = 'male', 'Male'
-        FEMALE = 'female', 'Female'
-        GENDERLESS = 'genderless', 'Genderless'
-
     part_number = models.CharField(max_length=50, unique=True)
     name = models.CharField('Description', max_length=200, blank=True)
     category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL, related_name='parts')
@@ -55,10 +49,6 @@ class Part(models.Model):
         max_digits=12, decimal_places=2, default=0, help_text='Flag as low stock at or below this quantity.',
     )
     quantity_on_hand = models.DecimalField(max_digits=12, decimal_places=2, default=0, editable=False)
-    # Interconnect: parts with the same family can mate (e.g. a "D-sub 25"
-    # female to a "D-sub 25" male). An empty family means "not a connector".
-    interconnect_family = models.CharField(max_length=100, blank=True)
-    interconnect_gender = models.CharField(max_length=20, choices=Gender, blank=True)
     is_active = models.BooleanField('Active', default=True, help_text='Untick to archive the part.')
 
     class Meta:
@@ -77,31 +67,6 @@ class Part(models.Model):
     @property
     def stock_value(self):
         return self.quantity_on_hand * self.cost
-
-    @property
-    def interconnect_label(self):
-        if not self.interconnect_family:
-            return ''
-        return f'{self.interconnect_family} ({self.interconnect_gender})' if self.interconnect_gender else self.interconnect_family
-
-    def mates_with(self, other):
-        """True if the two parts plug into each other: same family, and
-        male↔female (a blank or genderless gender mates with anything)."""
-        family = self.interconnect_family.strip().lower()
-        if not family or family != other.interconnect_family.strip().lower():
-            return False
-        genders = {self.interconnect_gender, other.interconnect_gender}
-        if genders & {'', self.Gender.GENDERLESS}:
-            return True
-        return self.interconnect_gender != other.interconnect_gender
-
-    def mates(self):
-        if not self.interconnect_family.strip():
-            return []
-        candidates = Part.objects.filter(
-            interconnect_family__iexact=self.interconnect_family.strip(), is_active=True,
-        ).exclude(pk=self.pk)
-        return [p for p in candidates if self.mates_with(p)]
 
 
 class PartAttributeValue(models.Model):

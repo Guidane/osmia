@@ -4,7 +4,7 @@ A device is anything with connectors that takes part in an electrical setup:
 units the company builds (a computer, an inverter, ...), the test equipment
 it builds to test them, and external equipment such as power supplies and
 electronic loads. Each connector (J01, P01, ...) has numbered pins with a
-label, a signal and an optional pin set (e.g. a D-sub PWR/GND pair).
+label and a signal.
 
 The definition (name, connectors, pins) is versioned the same way as the
 harness designer's device library: every change is kept as an immutable
@@ -78,7 +78,7 @@ class Device(models.Model):
                     'id': c.designator,
                     'side': c.side,
                     'pins': [
-                        {'id': str(p.position), 'label': p.label, 'signal': p.signal, 'set': p.set_name}
+                        {'id': str(p.position), 'label': p.label, 'signal': p.signal}
                         for p in c.pins.all()
                     ],
                 }
@@ -111,7 +111,6 @@ class Device(models.Model):
                     connector=connector, position=p_index + 1,
                     label=(p.get('label') or str(p_index + 1)).strip()[:20],
                     signal=(p.get('signal') or '').strip()[:50],
-                    set_name=(p.get('set') or '').strip()[:50],
                 )
                 for p_index, p in enumerate(c.get('pins') or [])
             )
@@ -138,8 +137,20 @@ class Device(models.Model):
         self.save(update_fields=['version'])
 
     def to_harness(self):
-        return {**self.definition(), 'id': str(self.pk), 'version': self.version, 'url': self.get_absolute_url(),
+        """The definition plus what the designer shows but doesn't version,
+        e.g. each connector's part (number, type and a link to its page)."""
+        data = {**self.definition(), 'id': str(self.pk), 'version': self.version, 'url': self.get_absolute_url(),
                 'origin': self.origin}
+        parts = {c.designator: c.part for c in self.connectors.select_related('part')}
+        for connector in data['connectors']:
+            part = parts.get(connector['id'])
+            connector['part'] = {
+                'part_number': part.part_number,
+                'name': part.name,
+                'type': part.name,
+                'url': part.get_absolute_url(),
+            } if part else None
+        return data
 
 
 class Connector(models.Model):
@@ -152,7 +163,7 @@ class Connector(models.Model):
     side = models.CharField(max_length=5, choices=Side, default=Side.RIGHT, help_text='Where it sits in the harness designer.')
     part = models.ForeignKey(
         'inventory.Part', null=True, blank=True, on_delete=models.SET_NULL, related_name='device_connectors',
-        verbose_name='Physical connector', help_text='The connector part, e.g. a D-sub 25 socket. Gives the interconnect family and gender.',
+        verbose_name='Physical connector', help_text='The connector part, e.g. a D-sub 25 socket. Its description is shown as the connector type in harnesses.',
     )
     description = models.CharField(max_length=200, blank=True, help_text='e.g. "Main power in".')
     position = models.PositiveIntegerField(default=0)
@@ -180,7 +191,6 @@ class Pin(models.Model):
     position = models.PositiveIntegerField()
     label = models.CharField(max_length=20, help_text='The number printed on the connector, e.g. 13.')
     signal = models.CharField(max_length=50, blank=True, help_text='e.g. PWR, GND, CAN_H.')
-    set_name = models.CharField('Pin set', max_length=50, blank=True, help_text='Groups pins wired together, e.g. "Set 1".')
 
     class Meta:
         ordering = ['position']

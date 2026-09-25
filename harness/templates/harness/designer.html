@@ -28,25 +28,24 @@
   </header>
 
   <div id="workspace">
-    <div id="main">
-      <aside id="library-panel">
-        <h3>Device Library</h3>
-        <div id="device-list"></div>
-        <button id="btn-new-device">+ New Device</button>
-        <p class="hint">Click a device, then click the canvas to place it.</p>
-      </aside>
+    <div id="library-bar">
+      <label>Place device
+        <select id="device-select"><option value="">Choose a device to place…</option></select>
+      </label>
+      <button id="btn-edit-device" type="button" title="Edit the chosen device's connectors and pins" disabled>✎ Edit</button>
+      <button id="btn-device-versions" type="button" title="Version history of the chosen device" disabled>Versions</button>
+      <a id="btn-open-device" class="hidden" href="#" target="_blank" title="Open the device in Osmia">↗</a>
+      <button id="btn-new-device" type="button">+ New device</button>
+      <span class="bar-sep"></span>
+      <label>Harness <select id="harness-select"></select></label>
+      <span id="selection-bar"></span>
+    </div>
 
+    <div id="main">
       <div id="canvas-wrap">
         <canvas id="canvas" width="2000" height="1400"></canvas>
         <button id="btn-loopback-pending" class="hidden">🔁 Loop Back this connector instead</button>
       </div>
-
-      <aside id="props-panel">
-        <h3>Properties</h3>
-        <div id="props-body"><p class="hint">Select a device or harness on the canvas.</p></div>
-        <h3>Harnesses</h3>
-        <div id="harness-list"></div>
-      </aside>
     </div>
 
     <div id="drawer" class="hidden">
@@ -63,13 +62,11 @@
             <tr>
               <th>Owner</th>
               <th>Verify</th>
-              <th>Set Name</th>
               <th>Pin</th>
               <th>Pin</th>
-              <th>Set Name</th>
               <th>Verify</th>
               <th>Owner</th>
-              <th>Set Type</th>
+              <th>Wire type</th>
               <th>AWG</th>
               <th>Length</th>
               <th></th>
@@ -102,33 +99,33 @@
     </div>
   </div>
 
-  <!-- Connect Sets Modal: choose which pin set(s) on each connector to wire together -->
+  <!-- Connect Modal: pick the pins of each wire, pin to pin -->
   <div id="connect-modal" class="modal hidden">
     <div class="modal-box">
       <h3 id="connect-modal-title">Connect</h3>
-      <p class="hint">Matching sets are added automatically below. Use "+ Add Set" to wire in another set (or spare pin), then fine-tune individual pins per row.</p>
+      <p class="hint">Pick a pin on each side for every wire. Pins that are already wired aren't offered. A wire whose signals the Signal Rules don't allow turns red.</p>
       <div id="connect-unit-row" class="hidden">
-        <label>Unit <select id="connect-unit-select"></select></label>
+        <label>Destination <select id="connect-unit-select"></select></label>
       </div>
       <table id="connect-pick-table" class="pick-table">
         <thead>
           <tr>
-            <th colspan="3">From</th>
-            <th colspan="3">To</th>
+            <th colspan="2">From</th>
+            <th></th>
+            <th colspan="2">To</th>
             <th rowspan="2"></th>
           </tr>
           <tr>
-            <th>Set</th><th>Signal</th><th>Pin</th>
-            <th>Pin</th><th>Signal</th><th>Set</th>
+            <th>Signal</th><th>Pin</th>
+            <th></th>
+            <th>Pin</th><th>Signal</th>
           </tr>
         </thead>
         <tbody id="connect-pick-body"></tbody>
       </table>
-      <div id="add-set-row" class="add-set-row">
-        <select id="add-set-from"></select>
-        <span>→</span>
-        <select id="add-set-to"></select>
-        <button id="btn-add-mapping" type="button">+ Add Set</button>
+      <div class="add-set-row">
+        <button id="btn-add-wire" type="button">+ Add wire</button>
+        <button id="btn-auto-match" type="button" title="Adds a wire for every free pin pair whose signals match, e.g. PWR to PWR">Match remaining pins by signal</button>
       </div>
 
       <div class="modal-actions">

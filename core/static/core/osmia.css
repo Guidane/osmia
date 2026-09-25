@@ -177,3 +177,32 @@ ul.plain li { padding: 2px 0; }
 .version-line { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .version-line:last-child { border-bottom: 0; }
 .version-line form { margin: 0; }
+
+/* Part lookup */
+.lookup-row { display: flex; align-items: center; gap: 12px; margin: -6px 0 12px; flex-wrap: wrap; }
+.lookup-row label { font-weight: normal; display: flex; align-items: center; gap: 4px; }
+.lookup-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 14px; background: #fafbfc; }
+.lookup-box.error { border-color: #fecaca; background: #fee2e2; }
+.lookup-box p { margin: 0 0 8px; }
+.lookup-box table { margin-bottom: 8px; }
+.lookup-box tr.lookup-filled td:last-child { color: var(--ok); }
+.lookup-box tr.lookup-missing td { color: var(--muted); }
+
+/* Forms laid out as a table: field name left, value right */
+.form-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.form-table th { width: 36%; text-align: left; vertical-align: middle; padding: 6px 12px 6px 0; font-weight: 600; color: var(--text); }
+.form-table td { padding: 5px 0; vertical-align: middle; }
+.form-table tr + tr th, .form-table tr + tr td { border-top: 1px solid #f0f1f3; }
+.form-table td > input:not([type=checkbox]), .form-table td > select, .form-table td > textarea { width: 100%; }
+.form-table td small.muted { display: block; margin-top: 2px; }
+.form-table tr.has-error input, .form-table tr.has-error select { border-color: var(--danger); }
+.form-table tr.lookup-tr th, .form-table tr.lookup-tr td { border-top: 0; padding-top: 0; }
+.form-table .lookup-row { margin: 0; }
+.form-table .lookup-box { margin: 8px 0 0; }
+
+/* Part form: main fields left, attributes in the space to the right */
+.part-form-card { max-width: 1100px; }
+.part-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.part-form-grid .attribute-editor { margin: 0; }
+.part-form-grid .attribute-editor .form-table { margin-bottom: 0; }
+@media (max-width: 800px) { .part-form-grid { grid-template-columns: 1fr; } }

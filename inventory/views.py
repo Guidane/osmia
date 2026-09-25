@@ -1,18 +1,23 @@
+import json
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
 from django.db.models import Count, F, Q
+from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 
 from core import hooks
 from core.trees import sorted_by_path
 
+from . import lookup
 from .forms import AttributeFormSet, CategoryForm, LocationForm, PartForm, StockMoveForm
-from .models import Category, Location, Part, StockMove
+from .models import Attribute, Category, Location, Part, StockMove
 
 
 class PartListView(LoginRequiredMixin, ListView):
@@ -26,7 +31,7 @@ class PartListView(LoginRequiredMixin, ListView):
             qs = qs.filter(
                 Q(part_number__icontains=word) | Q(name__icontains=word)
                 | Q(category__name__icontains=word) | Q(location__name__icontains=word)
-                | Q(interconnect_family__icontains=word) | Q(attribute_values__value__icontains=word)
+                | Q(attribute_values__value__icontains=word)
             )
         if g.get('category'):
             category = Category.objects.filter(pk=g['category']).first()
@@ -58,7 +63,6 @@ class PartDetailView(LoginRequiredMixin, DetailView):
             **kwargs,
             moves=self.object.moves.select_related('user', 'task')[:50],
             attribute_values=self.object.attribute_values.select_related('attribute'),
-            mates=self.object.mates(),
             panels=hooks.collect('part_detail_panels', self.request, self.object),
         )
 
@@ -85,6 +89,43 @@ class PartCreateView(PartFormMixin, CreateView):
 class PartUpdateView(PartFormMixin, UpdateView):
     def get_context_data(self, **kwargs):
         return super().get_context_data(**kwargs, heading=f'Edit {self.object}', cancel_url=self.object.get_absolute_url())
+
+
+@login_required
+def part_lookup(request):
+    """JSON: what an online provider knows about ?part_number=..."""
+    part_number = request.GET.get('part_number', '').strip()
+    if not part_number:
+        return JsonResponse({'error': 'Enter a part number first.'}, status=400)
+    try:
+        info = lookup.lookup(part_number)
+    except lookup.LookupNotConfigured as exc:
+        return JsonResponse({'error': str(exc), 'not_configured': True}, status=503)
+    except lookup.LookupFailed as exc:
+        return JsonResponse({'error': str(exc)}, status=502)
+    if info is None:
+        return JsonResponse({'error': f'No part found for "{part_number}".'}, status=404)
+    return JsonResponse({'part': info.as_dict()})
+
+
+@login_required
+@require_POST
+def category_add_attributes(request, pk):
+    """JSON in: {"names": [...]}; adds the missing ones to the category and
+    returns every requested attribute as {name, id} (existing ones too)."""
+    category = get_object_or_404(Category, pk=pk)
+    try:
+        names = json.loads(request.body or b'{}').get('names') or []
+    except (ValueError, AttributeError):
+        return HttpResponseBadRequest('Expected {"names": [...]}.')
+    result = []
+    for name in dict.fromkeys(str(n).strip()[:100] for n in names):
+        if not name:
+            continue
+        attribute = (Attribute.objects.filter(category=category, name__iexact=name).first()
+                     or Attribute.objects.create(category=category, name=name))
+        result.append({'name': attribute.name, 'id': attribute.pk})
+    return JsonResponse({'attributes': result})
 
 
 class MoveListView(LoginRequiredMixin, ListView):

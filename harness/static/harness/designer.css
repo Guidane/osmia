@@ -582,3 +582,30 @@
 #harness-app { background: #f4f5f7; color: #1c1e21; font-family: system-ui, Arial, sans-serif; }
 #harness-app .dev-open { position: absolute; top: 6px; right: 30px; text-decoration: none; font-size: 13px; }
 #harness-app .device-card { padding-right: 46px; }
+
+/* Device library as a dropdown bar; no side panes; canvas and table 50/50. */
+#library-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px; background: #fff; border-bottom: 1px solid #ddd; font-size: 13px;
+}
+#library-bar label { display: flex; align-items: center; gap: 6px; }
+#library-bar select { max-width: 380px; padding: 4px 6px; }
+#library-bar button, #library-bar a {
+  padding: 4px 10px; border: 1px solid #c3d3ee; border-radius: 4px; background: #fff;
+  color: #3b7dd8; cursor: pointer; text-decoration: none; font-size: 13px;
+}
+#library-bar button:hover:not(:disabled), #library-bar a:hover { background: #eaf1fd; }
+#library-bar button:disabled { opacity: .45; cursor: default; }
+#library-bar .bar-sep { width: 1px; align-self: stretch; background: #ddd; margin: 0 4px; }
+#selection-bar { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+#selection-bar label { display: flex; align-items: center; gap: 4px; }
+#selection-bar input[type=text] { width: 150px; padding: 3px 6px; }
+#selection-bar .danger { background: #fff; }
+#main { flex: 1 1 0; min-height: 0; }
+#drawer { flex: 1 1 0; height: auto; min-height: 0; }
+.pick-table tr.pick-bad td { background: #fdecea; }
+.pick-table .pick-arrow { text-align: center; color: #888; }
+.branch-header-row .conn-verify-label { font-weight: normal; font-size: 12px; color: #555; white-space: nowrap; }
+#harness-app .conn-part { font-size: 11px; font-weight: normal; color: #555; margin-top: 2px; }
+#harness-app .conn-part a { color: #3b7dd8; }
+#harness-app .conn-part.muted { color: #aaa; font-style: italic; }

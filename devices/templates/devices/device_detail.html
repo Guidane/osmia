@@ -20,12 +20,12 @@
     <section class="card panel">
       <h2>{{ c.designator }} pinout {% if c.description %}<span class="muted">· {{ c.description }}</span>{% endif %}</h2>
       <table class="list compact">
-        <thead><tr><th class="num">#</th><th>Pin</th><th>Signal</th><th>Pin set</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Pin</th><th>Signal</th></tr></thead>
         <tbody>
         {% for p in c.pins.all %}
-          <tr><td class="num muted">{{ p.position }}</td><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td><td>{{ p.set_name }}</td></tr>
+          <tr><td class="num muted">{{ p.position }}</td><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td></tr>
         {% empty %}
-          <tr><td colspan="4" class="muted">No pins.</td></tr>
+          <tr><td colspan="3" class="muted">No pins.</td></tr>
         {% endfor %}
         </tbody>
       </table>

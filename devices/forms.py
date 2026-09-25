@@ -53,9 +53,8 @@ class ConnectorForm(forms.ModelForm):
 
 
 PinFormSet = forms.inlineformset_factory(
-    Connector, Pin, fields=['label', 'signal', 'set_name'], extra=0, can_delete=True,
+    Connector, Pin, fields=['label', 'signal'], extra=0, can_delete=True,
     widgets={
         'label': forms.TextInput(attrs={'style': 'width: 6em'}),
-        'set_name': forms.TextInput(attrs={'style': 'width: 9em'}),
     },
 )

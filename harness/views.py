@@ -53,7 +53,7 @@ def _json_body(request):
 @require_http_methods(['GET', 'POST'])
 def api_devices(request):
     if request.method == 'GET':
-        devices = Device.objects.prefetch_related('connectors__pins')
+        devices = Device.objects.prefetch_related('connectors__pins', 'connectors__part')
         return JsonResponse([d.to_harness() for d in devices], safe=False)
     data = _json_body(request)
     if not isinstance(data, dict):
