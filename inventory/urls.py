@@ -16,5 +16,6 @@ urlpatterns = [
     path('categories/<int:pk>/attributes/add/', views.category_add_attributes, name='category_add_attributes'),
     path('locations/', views.LocationListView.as_view(), name='location_list'),
     path('locations/new/', views.LocationCreateView.as_view(), name='location_create'),
-    path('locations/<int:pk>/', views.LocationUpdateView.as_view(), name='location_edit'),
+    path('locations/<int:pk>/', views.LocationDetailView.as_view(), name='location_detail'),
+    path('locations/<int:pk>/edit/', views.LocationUpdateView.as_view(), name='location_edit'),
 ]

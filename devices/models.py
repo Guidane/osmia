@@ -11,6 +11,7 @@ harness designer's device library: every change is kept as an immutable
 snapshot and ``version`` points at the current one.
 """
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models, transaction
 from django.urls import reverse
 
@@ -31,6 +32,7 @@ class Device(models.Model):
 
     name = models.CharField(max_length=200)
     part_number = models.CharField(max_length=100, blank=True)
+    images = GenericRelation('core.Image')  # pictures, shown with {% image_gallery %}
     origin = models.CharField(max_length=20, choices=Origin, default=Origin.IN_HOUSE)
     role = models.CharField(max_length=20, choices=Role, default=Role.PRODUCT)
     # For devices we build: the assembly (bill of materials) behind it.

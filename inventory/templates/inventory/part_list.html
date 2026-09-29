@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% block content %}
 <div class="toolbar">
   <h1>Parts</h1>
@@ -28,7 +29,7 @@
   <tbody>
   {% for p in object_list %}
     <tr class="{% if p.is_low_stock and p.is_active %}warn{% endif %}">
-      <td><a href="{{ p.get_absolute_url }}">{{ p.part_number }}</a></td>
+      <td>{% cover_thumb p 28 %} <a href="{{ p.get_absolute_url }}">{{ p.part_number }}</a></td>
       <td>{{ p.name }} {% if not p.is_active %}<span class="badge off">Archived</span>{% endif %}</td>
       <td>{{ p.category|default:"—" }}</td>
       <td>{{ p.location|default:"—" }}</td>

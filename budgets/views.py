@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
+from core import hooks
 from core.trees import sorted_by_path
 from tasks.models import Task
 
@@ -45,6 +46,7 @@ class BudgetDetailView(LoginRequiredMixin, DetailView):
             over_allocated=allocated > b.amount,
             tasks=tasks,
             own_spent=spending.own[b.pk],
+            panels=hooks.collect('budget_detail_panels', self.request, b),
         )
 
 

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>{{ heading }}</h1>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <div class="form-grid">
+      {% for field in form %}{% include "core/_field.html" %}{% endfor %}
+    </div>
+    <fieldset>
+      <legend>Lines</legend>
+      {{ formset.management_form }}
+      {{ formset.non_form_errors }}
+      <table class="list compact">
+        <thead><tr><th>Part</th><th>Quantity</th><th>Unit price</th><th>Remove</th></tr></thead>
+        <tbody id="line-rows">
+        {% for f in formset %}
+          <tr>
+            <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.part }}{{ f.part.errors }}{{ f.non_field_errors }}</td>
+            <td>{{ f.quantity }}{{ f.quantity.errors }}</td>
+            <td>{{ f.unit_price }}{{ f.unit_price.errors }}</td>
+            <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <template id="line-template">
+        <tr>
+          <td>{% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}{{ formset.empty_form.part }}</td>
+          <td>{{ formset.empty_form.quantity }}</td>
+          <td>{{ formset.empty_form.unit_price }}</td>
+          <td></td>
+        </tr>
+      </template>
+      <button type="button" class="btn small" id="btn-add-line">+ Add line</button>
+    </fieldset>
+    <div class="actions">
+      <button class="btn primary">Save</button>
+      <a class="btn" href="{% if order.pk %}{{ order.get_absolute_url }}{% else %}{% url 'orders:list' %}{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+<script>
+  (function () {
+    const total = document.getElementById('id_lines-TOTAL_FORMS');
+    const rows = document.getElementById('line-rows');
+    const template = document.getElementById('line-template').innerHTML;
+    document.getElementById('btn-add-line').addEventListener('click', () => {
+      rows.insertAdjacentHTML('beforeend', template.replace(/__prefix__/g, total.value));
+      total.value = Number(total.value) + 1;
+    });
+  })();
+</script>
+{% endblock %}

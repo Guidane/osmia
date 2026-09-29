@@ -25,6 +25,7 @@
       <a href="{% url m.home_url_name %}" title="{{ m.manifest.title }}" class="{% if m == current_module %}active{% endif %}">{{ m.manifest.icon }}</a>
     {% endif %}{% endfor %}
   </nav>
+  {% for item in topbar_items %}{{ item|safe }}{% endfor %}
   <a class="me" href="{% url 'users:detail' user.pk %}">{{ user.get_full_name|default:user.username }}</a>
   <form method="post" action="{% url 'users:logout' %}">{% csrf_token %}<button class="link">Log out</button></form>
 </header>

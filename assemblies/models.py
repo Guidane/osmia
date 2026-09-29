@@ -1,6 +1,7 @@
 from collections import defaultdict
 from decimal import Decimal
 
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from django.db.models import Q
 from django.urls import reverse
@@ -28,6 +29,7 @@ class Assembly(models.Model):
     name = models.CharField(max_length=200)
     assembly_type = models.CharField('Type', max_length=20, choices=Type, default=Type.GENERIC)
     status = models.CharField(max_length=20, choices=Status, default=Status.MANUFACTURING)
+    images = GenericRelation('core.Image')  # pictures, shown with {% image_gallery %}
     version = models.CharField(max_length=20, default='1')
     # Bumped automatically whenever the BOM or version changes, so anything
     # built against an older revision can tell it has drifted.

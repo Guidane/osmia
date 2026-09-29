@@ -1,3 +1,4 @@
+from pathlib import Path
 from io import StringIO
 
 from django.core.management import call_command
@@ -57,6 +58,7 @@ class PageSmokeTests(TestCase):
             reverse('inventory:category_edit', args=[part.category_id]),
             reverse('inventory:location_list'), reverse('inventory:location_create'),
             reverse('inventory:location_edit', args=[part.location_id]),
+            reverse('inventory:location_detail', args=[part.location_id]),
             reverse('assemblies:list'), reverse('assemblies:create'),
         ] + [reverse(name, args=[a.pk]) for a in Assembly.objects.all() for name in ('assemblies:detail', 'assemblies:edit')]
         for url in urls:
@@ -131,3 +133,138 @@ class PageSmokeTests(TestCase):
         bob = User.objects.get(username='bob')
         self.assertEqual(self.client.get(reverse('users:edit', args=[bob.pk])).status_code, 200)
         self.assertEqual(self.client.get(reverse('users:create')).status_code, 403)
+
+
+# -- Images ----------------------------------------------------------------------------
+
+import io
+import shutil
+import tempfile
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
+from PIL import Image as PILImage
+
+from core.models import Image
+from devices.models import Device
+from harness.models import HarnessProject
+
+
+def picture(name='photo.jpg', size=(3000, 1500), fmt='JPEG', mode='RGB', orientation=None):
+    img = PILImage.new(mode, size, (200, 30, 30, 128) if mode == 'RGBA' else (200, 30, 30))
+    out = io.BytesIO()
+    kwargs = {}
+    if orientation:
+        exif = PILImage.Exif()
+        exif[0x0112] = orientation  # Orientation
+        exif[0x010F] = 'CameraMaker'  # Make: metadata that must not survive
+        kwargs['exif'] = exif
+    img.save(out, fmt, **kwargs)
+    return SimpleUploadedFile(name, out.getvalue(), content_type='image/' + fmt.lower())
+
+
+class ImageTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_demo', stdout=StringIO())
+
+    def setUp(self):
+        self.media = tempfile.mkdtemp()
+        self.override = override_settings(MEDIA_ROOT=self.media)
+        self.override.enable()
+        self.client.login(username='admin', password='admin')
+        self.part = Part.objects.get(part_number='BELT-C2')
+
+    def tearDown(self):
+        self.override.disable()
+        shutil.rmtree(self.media, ignore_errors=True)
+
+    def upload(self, record, *files, follow=False, **extra):
+        url = reverse('core:image_upload', args=[record._meta.label_lower, record.pk])
+        return self.client.post(url, {'images': list(files), **extra}, follow=follow)
+
+    def test_upload_is_resized_turned_upright_and_stripped(self):
+        response = self.upload(self.part, picture(orientation=6), caption='Belt', next='https://evil.example/')
+        self.assertRedirects(response, self.part.get_absolute_url())  # unsafe "next" ignored
+        image = self.part.images.get()
+        self.assertEqual(image.caption, 'Belt')
+        self.assertEqual(image.uploaded_by.username, 'admin')
+        # 3000x1500 rotated a quarter turn by its EXIF orientation, then scaled to fit 2000.
+        self.assertEqual((image.width, image.height), (1000, 2000))
+        with PILImage.open(image.file.path) as stored:
+            self.assertEqual(stored.format, 'JPEG')
+            self.assertNotIn(0x010F, stored.getexif())
+        with PILImage.open(image.thumb.path) as thumb:
+            self.assertEqual(max(thumb.size), 400)
+
+        full = self.client.get(image.url)
+        self.assertEqual(full.status_code, 200)
+        self.assertEqual(full['Content-Type'], 'image/jpeg')
+        self.assertEqual(self.client.get(image.thumb_url).status_code, 200)
+        self.client.logout()
+        self.assertEqual(self.client.get(image.url).status_code, 302)  # login first
+
+    def test_transparent_png_stays_png_and_bad_files_are_refused(self):
+        self.upload(self.part, picture('logo.png', (64, 64), 'PNG', 'RGBA'),
+                    SimpleUploadedFile('notes.jpg', b'not really a picture'))
+        image = self.part.images.get()
+        self.assertTrue(image.file.name.endswith('.png'))
+        self.assertEqual((image.width, image.height), (64, 64))
+        response = self.upload(self.part, SimpleUploadedFile('x.jpg', b'nope'), follow=True)
+        self.assertContains(response, 'not an image Osmia can read')
+
+    def test_only_models_with_images(self):
+        order_url = reverse('core:image_upload', args=['orders.order', 1])
+        self.assertEqual(self.client.post(order_url, {'images': [picture()]}).status_code, 404)
+        self.assertEqual(self.client.post(reverse('core:image_upload', args=['nope.nothing', 1])).status_code, 404)
+
+    def test_user_photos_are_theirs_and_managers(self):
+        carla, bob = User.objects.get(username='carla'), User.objects.get(username='bob')
+        self.client.login(username='bob', password='demo')
+        self.assertEqual(self.upload(carla, picture()).status_code, 403)
+        self.upload(bob, picture())
+        self.assertEqual(bob.images.count(), 1)
+        page = self.client.get(carla.get_absolute_url())
+        self.assertNotContains(page, '+ Add images')
+        self.assertEqual(self.client.post(reverse('core:image_update', args=[bob.images.get().pk]), {'action': 'delete'}).status_code, 302)
+        self.client.login(username='admin', password='admin')
+        self.upload(carla, picture())
+        self.assertEqual(carla.images.count(), 1)
+
+    def test_cover_caption_and_delete(self):
+        self.upload(self.part, picture('a.jpg', (50, 50)), picture('b.jpg', (60, 60)))
+        first, second = self.part.images.all()
+        update = lambda img, **data: self.client.post(reverse('core:image_update', args=[img.pk]), data)
+        update(second, action='cover')
+        self.assertEqual(list(self.part.images.all()), [second, first])
+        update(first, action='caption', caption='Side view')
+        first.refresh_from_db()
+        self.assertEqual(first.caption, 'Side view')
+        path = first.file.path
+        update(first, action='delete')
+        self.assertFalse(Image.objects.filter(pk=first.pk).exists())
+        self.assertFalse(Path(path).exists())
+
+    def test_deleting_a_record_deletes_its_images(self):
+        task = Task.objects.create(title='Photo task')
+        self.upload(task, picture())
+        path = task.images.get().file.path
+        task.delete()
+        self.assertFalse(Image.objects.exists())
+        self.assertFalse(Path(path).exists())
+
+    def test_galleries_on_every_page(self):
+        records = [
+            self.part, self.part.location, Task.objects.first(), User.objects.get(username='carla'), Device.objects.first(),
+            Assembly.objects.first(), HarnessProject.objects.create(name='Bench harness'),
+        ]
+        for record in records:
+            with self.subTest(record=record._meta.label):
+                self.upload(record, picture(size=(80, 80)))
+                page = reverse('harness:project_images', args=[record.pk]) if isinstance(record, HarnessProject) else record.get_absolute_url()
+                self.assertContains(self.client.get(page), record.images.get().thumb_url)
+        for url in (reverse('inventory:part_list'), reverse('inventory:location_list'), reverse('users:list'), reverse('devices:list'),
+                    reverse('assemblies:list'), reverse('harness:list')):
+            with self.subTest(url=url):
+                self.assertContains(self.client.get(url), '?thumb=1')
+        self.assertContains(self.client.get(reverse('harness:designer')), 'data-images-url="/harness/projects/0/images/"')

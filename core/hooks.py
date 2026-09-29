@@ -14,6 +14,9 @@ Hooks used by the bundled modules:
     assembly_detail_panels(request, assembly) -> Panel
     device_detail_panels(request, device) -> Panel
     task_costs(task_ids)              -> Costs  (money spent per task, e.g. materials)
+    budget_costs(budget_ids)          -> Costs  (money spent straight on a budget, e.g. orders; by_task holds budget ids)
+    budget_detail_panels(request, budget), order_detail_panels(request, order) -> Panel
+    topbar_items(request)             -> safe HTML for the top bar (e.g. the notifications bell)
 
 A callback may return None to contribute nothing.
 """

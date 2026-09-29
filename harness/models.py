@@ -7,6 +7,7 @@ and verification flags. The drawing is stored as the designer's JSON; every
 save is a new immutable version and ``version`` points at the current one.
 """
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models, transaction
 from django.urls import reverse
 
@@ -46,6 +47,7 @@ class SignalRule(models.Model):
 
 class HarnessProject(models.Model):
     name = models.CharField(max_length=200, default='Untitled Harness')
+    images = GenericRelation('core.Image')  # pictures, shown with {% image_gallery %}
     version = models.PositiveIntegerField(default=0, editable=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)

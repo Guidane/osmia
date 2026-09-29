@@ -8,10 +8,6 @@ urlpatterns = [
     path('new/', views.UserCreateView.as_view(), name='create'),
     path('<int:pk>/', views.UserDetailView.as_view(), name='detail'),
     path('<int:pk>/edit/', views.UserUpdateView.as_view(), name='edit'),
-    path('departments/', views.DepartmentListView.as_view(), name='department_list'),
-    path('departments/new/', views.DepartmentCreateView.as_view(), name='department_create'),
-    path('departments/<int:pk>/', views.DepartmentDetailView.as_view(), name='department_detail'),
-    path('departments/<int:pk>/edit/', views.DepartmentUpdateView.as_view(), name='department_edit'),
     path('login/', auth_views.LoginView.as_view(template_name='users/login.html', redirect_authenticated_user=True), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
 ]

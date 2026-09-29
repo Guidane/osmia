@@ -25,7 +25,7 @@ class PartListView(LoginRequiredMixin, ListView):
     paginate_by = 50
 
     def get_queryset(self):
-        qs = Part.objects.select_related('category__parent', 'location__parent')
+        qs = Part.objects.select_related('category__parent', 'location__parent').prefetch_related('images')
         g = self.request.GET
         for word in g.get('q', '').split():
             qs = qs.filter(
@@ -206,11 +206,26 @@ class LocationListView(LoginRequiredMixin, ListView):
     template_name = 'inventory/tree_list.html'
 
     def get_queryset(self):
-        return sorted_by_path(Location.objects.select_related('parent').annotate(part_count=Count('parts')))
+        return sorted_by_path(
+            Location.objects.select_related('parent').prefetch_related('images').annotate(part_count=Count('parts'))
+        )
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
             **kwargs, heading='Locations', create_url=reverse('inventory:location_create'), filter_param='location',
+            show_images=True,
+        )
+
+
+class LocationDetailView(LoginRequiredMixin, DetailView):
+    model = Location
+
+    def get_context_data(self, **kwargs):
+        loc = self.object
+        return super().get_context_data(
+            **kwargs,
+            children=sorted_by_path(loc.children.annotate(part_count=Count('parts'))),
+            parts=loc.parts.select_related('category').prefetch_related('images'),
         )
 
 
@@ -221,12 +236,17 @@ class LocationCreateView(LoginRequiredMixin, CreateView):
     success_url = reverse_lazy('inventory:location_list')
     extra_context = {'heading': 'New location'}
 
+    def get_initial(self):
+        return {'parent': self.request.GET.get('parent')}
+
 
 class LocationUpdateView(LoginRequiredMixin, UpdateView):
     model = Location
     form_class = LocationForm
     template_name = 'core/form.html'
-    success_url = reverse_lazy('inventory:location_list')
+
+    def get_success_url(self):
+        return self.object.get_absolute_url()
 
     def get_context_data(self, **kwargs):
-        return super().get_context_data(**kwargs, heading=f'Edit {self.object}', cancel_url=self.success_url)
+        return super().get_context_data(**kwargs, heading=f'Edit {self.object}', cancel_url=self.object.get_absolute_url())

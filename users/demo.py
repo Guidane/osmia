@@ -1,12 +1,7 @@
 from core.trees import get_or_create_path
+from departments.models import Department
 
-from .models import Department, User
-
-# As in Waggle V3, plus a Field Service team.
-DEPARTMENTS = [
-    'Operations > Warehouse', 'Operations > Logistics', 'Operations > Field Service',
-    'Engineering > R&D', 'Engineering > QA', 'Marketing',
-]
+from .models import User
 
 PEOPLE = [
     ('alice', 'Alice', 'Martin', 'Operations Manager', 'Operations'),
@@ -16,9 +11,7 @@ PEOPLE = [
 
 
 def load():
-    """Additive: creates missing departments/users and fills blank departments."""
-    for path in DEPARTMENTS:
-        get_or_create_path(Department, path)
+    """Additive: creates missing users and fills blank departments."""
     if not User.objects.filter(username='admin').exists():
         User.objects.create_superuser('admin', 'admin@example.com', 'admin', first_name='Admin')
     for username, first, last, title, dept in PEOPLE:

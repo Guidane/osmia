@@ -18,7 +18,7 @@ class Budget(TreeNode):
     budget_number = models.CharField(max_length=50, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     department = models.ForeignKey(
-        'users.Department', null=True, blank=True, on_delete=models.SET_NULL, related_name='budgets',
+        'departments.Department', null=True, blank=True, on_delete=models.SET_NULL, related_name='budgets',
     )
 
     def get_absolute_url(self):
@@ -39,9 +39,11 @@ class TaskBudget(models.Model):
 
 
 class Spending:
-    """Spend per budget, gathered from every module's ``task_costs`` hook.
+    """Spend per budget, gathered from every module's ``task_costs`` hook
+    (what tasks charged to a budget cost) and ``budget_costs`` hook (spending
+    booked straight on a budget, e.g. placed orders).
 
-    ``own[budget_id]``   what tasks charged directly to the budget cost
+    ``own[budget_id]``   what was spent directly on the budget
     ``total[budget_id]`` own spend plus every sub-budget's
     ``by_task[task_id]`` {cost label: amount}, e.g. {'Materials': 89.00}
     """
@@ -56,6 +58,12 @@ class Spending:
         self.own = defaultdict(Decimal)
         for task_id, budget_id in task_budget.items():
             self.own[budget_id] += sum(self.by_task[task_id].values(), Decimal(0))
+        self.by_source = defaultdict(lambda: defaultdict(Decimal))  # {budget id: {label: amount}}
+        budget_ids = list(Budget.objects.values_list('pk', flat=True))
+        for costs in hooks.collect('budget_costs', budget_ids):
+            for budget_id, amount in costs.by_task.items():  # Costs.by_task holds budget ids here
+                self.own[budget_id] += amount
+                self.by_source[budget_id][costs.label] += amount
 
         parents = dict(Budget.objects.values_list('pk', 'parent_id'))
         self.total = defaultdict(Decimal)

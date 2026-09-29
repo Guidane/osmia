@@ -3,7 +3,7 @@ import tempfile
 from io import StringIO
 from pathlib import Path
 
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -35,27 +35,26 @@ class HarnessApiTests(HarnessTestCase):
         self.assertEqual([c['id'] for c in pdu['connectors']], ['J01', 'J02'])
         self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR'}, pdu['connectors'][0]['pins'])
 
-    def test_designer_device_editor_saves_new_version(self):
-        data = self.client.get(f'{self.api}/devices/{self.pdu.pk}').json()
-        data['connectors'][1]['pins'].append({'id': '4', 'label': '4', 'signal': 'SHIELD'})
-        saved = self.post_json('/devices', data).json()
-        self.assertEqual(saved['version'], 2)
-        self.assertEqual(self.pdu.connectors.get(designator='J02').pins.count(), 4)
-        self.assertEqual(self.client.get(f'{self.api}/devices/{self.pdu.pk}/versions').json(), {'versions': [1, 2]})
-        old = self.client.get(f'{self.api}/devices/{self.pdu.pk}?version=1').json()
-        self.assertEqual(len(old['connectors'][1]['pins']), 3)
-        self.client.post(f'{self.api}/devices/{self.pdu.pk}/versions/1/activate')
+    def test_harness_cannot_create_or_change_devices(self):
+        before = (Device.objects.count(), self.pdu.version, list(self.pdu.connectors.values_list('designator', flat=True)))
+        new = {'name': 'Scope', 'part_number': '', 'color': '#123456', 'responsible_user_id': None, 'origin': 'external',
+               'connectors': [{'id': 'CH1', 'side': 'left', 'pins': [{'id': '1', 'label': 'SIG', 'signal': 'SENSE'}]}]}
+        self.assertEqual(self.post_json('/devices', new).status_code, 405)
+        edited = self.client.get(f'{self.api}/devices/{self.pdu.pk}').json()
+        edited['connectors'] = []
+        self.assertEqual(self.post_json('/devices', edited).status_code, 405)
+        self.assertEqual(self.post_json(f'/devices/{self.pdu.pk}', edited).status_code, 405)
+        self.assertEqual(self.client.post(f'{self.api}/devices/{self.pdu.pk}/versions/1/activate').status_code, 404)
         self.pdu.refresh_from_db()
-        self.assertEqual(self.pdu.version, 1)
+        after = (Device.objects.count(), self.pdu.version, list(self.pdu.connectors.values_list('designator', flat=True)))
+        self.assertEqual(before, after)
 
-    def test_new_external_device_from_designer(self):
-        saved = self.post_json('/devices', {
-            'name': 'Scope', 'part_number': '', 'color': '#123456', 'responsible_user_id': None, 'origin': 'external',
-            'connectors': [{'id': 'CH1', 'side': 'left', 'pins': [{'id': '1', 'label': 'SIG', 'signal': 'SENSE'}]}],
-        }).json()
-        device = Device.objects.get(pk=saved['id'])
-        self.assertTrue(device.is_external)
-        self.assertEqual(device.connectors.get().designator, 'CH1')
+    def test_device_read_includes_old_versions(self):
+        self.pdu.connectors.get(designator='J02').pins.filter(label='3').update(signal='SHIELD')
+        self.pdu.snapshot()
+        old = self.client.get(f'{self.api}/devices/{self.pdu.pk}?version=1').json()
+        self.assertEqual(old['connectors'][1]['pins'][2]['signal'], 'GND')
+        self.assertEqual(self.client.get(f'{self.api}/devices/{self.pdu.pk}').json()['version'], 2)
 
     def test_project_versions(self):
         psu = Device.objects.get(name='Bench power supply')
@@ -109,8 +108,11 @@ class HarnessApiTests(HarnessTestCase):
         resp = self.client.get(reverse('harness:designer'))
         self.assertContains(resp, f'data-api="{self.api}"')
         self.assertContains(resp, 'harness/designer.js')
-        self.assertContains(resp, 'id="dev-origin"')
         self.assertContains(resp, 'id="btn-export-csv"')
+        # No device editor in the designer: new devices are made in the Devices module.
+        self.assertNotContains(resp, 'device-modal')
+        self.assertNotContains(resp, 'btn-save-device')
+        self.assertContains(resp, f'id="btn-new-device" href="{reverse("devices:create")}"')
 
 
 class ImportTests(TestCase):
@@ -133,6 +135,13 @@ class ImportTests(TestCase):
             write('projects/p1/pointer.json', {'current': 1})
             write('settings/signal_rules.json', {'pairs': [['RX', 'TX']]})
             write('settings/users.json', {'users': [{'id': 'u1', 'name': 'user1'}]})
+            # Harness alone can't bring in devices: it needs them in Devices first.
+            with self.assertRaises(CommandError):
+                call_command('import_harness', tmp, stdout=StringIO())
+            self.assertFalse(Device.objects.exists())
+            call_command('import_harness_devices', tmp, stdout=StringIO())
+            call_command('import_harness_devices', tmp, stdout=StringIO())  # safe to repeat
+            self.assertEqual(Device.objects.count(), 1)
             call_command('import_harness', tmp, stdout=StringIO())
 
         ecu = Device.objects.get(name='ECU')

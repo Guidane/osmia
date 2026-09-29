@@ -1,9 +1,9 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 
-from core.trees import TreeNodeForm
+from departments.models import Department
 
-from .models import Department, User
+from .models import User
 
 PROFILE_FIELDS = ['first_name', 'last_name', 'email', 'job_title', 'phone']
 
@@ -34,8 +34,3 @@ class ProfileForm(forms.ModelForm):
     class Meta:
         model = User
         fields = PROFILE_FIELDS
-
-
-class DepartmentForm(TreeNodeForm):
-    class Meta(TreeNodeForm.Meta):
-        model = Department

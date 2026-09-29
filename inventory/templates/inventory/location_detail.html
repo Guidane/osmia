@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load osmia_images %}
+{% block content %}
+{% with loc=location %}
+<div class="toolbar">
+  <h1>{% for a in loc.ancestors %}{% if not forloop.last %}<a class="muted" href="{{ a.get_absolute_url }}">{{ a.name }}</a> <span class="muted">›</span> {% endif %}{% endfor %}{{ loc.name }}</h1>
+  <a class="btn" href="{% url 'inventory:location_create' %}?parent={{ loc.pk }}">New sub-location</a>
+  <a class="btn" href="{% url 'inventory:location_edit' loc.pk %}">Edit</a>
+</div>
+
+<div class="grid-2">
+  <div>
+    <section class="card panel">
+      <h2>Parts stored here <small class="muted">{{ parts|length }}</small></h2>
+      <table class="list">
+        <thead><tr><th>Part number</th><th>Description</th><th>Category</th><th class="num">On hand</th></tr></thead>
+        <tbody>
+        {% for p in parts %}
+          <tr{% if p.is_low_stock and p.is_active %} class="warn"{% endif %}>
+            <td>{% cover_thumb p 28 %} <a href="{{ p.get_absolute_url }}">{{ p.part_number }}</a></td>
+            <td>{{ p.name }} {% if not p.is_active %}<span class="badge off">Archived</span>{% endif %}</td>
+            <td>{{ p.category|default:"—" }}</td>
+            <td class="num">{{ p.quantity_on_hand|floatformat:"-2" }} {{ p.unit }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted">No parts are stored here{% if children %} directly{% endif %}.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+  <div>
+    {% image_gallery loc empty="No images yet, e.g. a photo of the shelf or bin so people can find it." %}
+    <section class="card panel">
+      <h2>Sub-locations</h2>
+      {% for c in children %}
+        <div><a href="{{ c.get_absolute_url }}">{{ c.name }}</a> <small class="muted">{{ c.part_count }} part{{ c.part_count|pluralize }}</small></div>
+      {% empty %}
+        <p class="muted">None.</p>
+      {% endfor %}
+    </section>
+  </div>
+</div>
+{% endwith %}
+{% endblock %}

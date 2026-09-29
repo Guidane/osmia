@@ -56,6 +56,7 @@ INSTALLED_APPS = [
 # URLs, dashboard and cross-module panels adapt automatically. A module's
 # dependencies must also be listed (checked by `manage.py check`).
 OSMIA_MODULES = [
+    'departments',
     'users',
     'tasks',
     'inventory',
@@ -63,6 +64,8 @@ OSMIA_MODULES = [
     'budgets',
     'devices',
     'harness',
+    'orders',
+    'automations',
 ]
 
 INSTALLED_APPS += OSMIA_MODULES
@@ -144,6 +147,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Uploaded images. They're served by Osmia itself, to logged-in users only
+# (core.views.image_file), so no MEDIA_URL is needed.
+MEDIA_ROOT = Path(os.environ.get('OSMIA_MEDIA_ROOT') or BASE_DIR / 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

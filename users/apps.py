@@ -6,12 +6,12 @@ class UsersConfig(OsmiaModuleConfig):
     name = 'users'
     manifest = Module(
         title='Users',
-        description='People, departments and access.',
+        description='People and access.',
+        depends=('departments',),
         icon='👥',
         sequence=10,
         menu=(
             MenuItem('All users', 'users:list'),
-            MenuItem('Departments', 'users:department_list'),
             MenuItem('New user', 'users:create'),
         ),
     )

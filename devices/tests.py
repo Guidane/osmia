@@ -45,8 +45,8 @@ class DeviceTests(DeviceTestCase):
             'designator': 'j03', 'side': 'right', 'part': '', 'description': 'Aux', 'add_pins': 3,
             'pins-TOTAL_FORMS': 0, 'pins-INITIAL_FORMS': 0, 'pins-MIN_NUM_FORMS': 0, 'pins-MAX_NUM_FORMS': 1000,
         })
-        self.assertRedirects(resp, self.pdu.get_absolute_url())
         j03 = self.pdu.connectors.get(designator='J03')  # upper-cased
+        self.assertRedirects(resp, self.pdu.get_absolute_url() + f'?connector={j03.pk}')
         self.assertEqual(list(j03.pins.values_list('label', flat=True)), ['1', '2', '3'])
         self.pdu.refresh_from_db()
         self.assertEqual(self.pdu.version, 2)
@@ -62,6 +62,26 @@ class DeviceTests(DeviceTestCase):
         data['pins-0-DELETE'] = 'on'
         self.client.post(reverse('devices:connector_edit', args=[self.pdu.pk, j03.pk]), data)
         self.assertEqual(list(j03.pins.values_list('position', 'signal')), [(1, 'TX'), (2, 'GND')])
+
+    def test_add_pin_rows_one_at_a_time(self):
+        j02 = self.pdu.connectors.get(designator='J02')
+        url = reverse('devices:connector_edit', args=[self.pdu.pk, j02.pk])
+        self.assertContains(self.client.get(url), 'id="btn-add-pin"')
+        pins = list(j02.pins.all())
+        data = {
+            'designator': 'J02', 'side': j02.side, 'part': j02.part_id or '', 'description': j02.description, 'add_pins': '',
+            'pins-TOTAL_FORMS': len(pins) + 2, 'pins-INITIAL_FORMS': len(pins),
+            'pins-MIN_NUM_FORMS': 0, 'pins-MAX_NUM_FORMS': 1000,
+        }
+        for i, pin in enumerate(pins):
+            data.update({f'pins-{i}-id': pin.pk, f'pins-{i}-connector': j02.pk,
+                         f'pins-{i}-label': pin.label, f'pins-{i}-signal': pin.signal})
+        n = len(pins)
+        data.update({f'pins-{n}-label': '4', f'pins-{n}-signal': 'SHIELD',       # added with "+ Add pin"
+                     f'pins-{n + 1}-label': '', f'pins-{n + 1}-signal': ''})    # blank new row: ignored
+        self.client.post(url, data)
+        self.assertEqual(list(j02.pins.values_list('position', 'label', 'signal'))[-1], (4, '4', 'SHIELD'))
+        self.assertEqual(j02.pins.count(), 4)
 
     def test_duplicate_designator_rejected(self):
         resp = self.client.post(reverse('devices:connector_create', args=[self.pdu.pk]), {
@@ -89,6 +109,38 @@ class DeviceTests(DeviceTestCase):
     def test_part_page_shows_connector_use(self):
         resp = self.client.get(Connector.objects.get(device=self.pdu, designator='J01').part.get_absolute_url())
         self.assertContains(resp, 'Used as a connector on')
+
+    def test_device_page_sidebar_and_views(self):
+        j01 = self.pdu.connectors.get(designator='J01')
+        page = self.client.get(self.pdu.get_absolute_url())
+        # Sidebar: details link plus every connector.
+        self.assertContains(page, 'Device details')
+        self.assertContains(page, f'?connector={j01.pk}"')
+        self.assertContains(page, f'?connector={self.pdu.connectors.get(designator="J02").pk}"')
+        # By default the right side shows the details (owner, role, versions, harness projects).
+        self.assertContains(page, 'Product (unit we build)')
+        self.assertContains(page, 'Carla Rossi')
+        self.assertContains(page, 'Harness projects')
+        # Clicking a connector shows its pins instead.
+        page = self.client.get(self.pdu.get_absolute_url() + f'?connector={j01.pk}')
+        self.assertContains(page, 'Edit pins')
+        self.assertContains(page, '<td>13</td><td>GND</td>')
+        self.assertContains(page, 'DB25-F')
+        self.assertNotContains(page, 'Versions</h2>')
+        # Another device's connector id isn't shown here.
+        other = Connector.objects.exclude(device=self.pdu).first()
+        self.assertContains(self.client.get(self.pdu.get_absolute_url() + f'?connector={other.pk}'), 'Device details</h2>')
+
+    def test_saving_pins_returns_to_that_connector(self):
+        j02 = self.pdu.connectors.get(designator='J02')
+        pins = list(j02.pins.all())
+        data = {'designator': 'J02', 'side': j02.side, 'part': j02.part_id or '', 'description': j02.description,
+                'add_pins': '', 'pins-TOTAL_FORMS': len(pins), 'pins-INITIAL_FORMS': len(pins),
+                'pins-MIN_NUM_FORMS': 0, 'pins-MAX_NUM_FORMS': 1000}
+        for i, pin in enumerate(pins):
+            data.update({f'pins-{i}-id': pin.pk, f'pins-{i}-connector': j02.pk, f'pins-{i}-label': pin.label, f'pins-{i}-signal': pin.signal})
+        resp = self.client.post(reverse('devices:connector_edit', args=[self.pdu.pk, j02.pk]), data)
+        self.assertRedirects(resp, self.pdu.get_absolute_url() + f'?connector={j02.pk}')
 
     def test_pages_render(self):
         for url in [

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from core.trees import get_or_create_path
 from tasks.models import Task
-from users.models import Department
+from departments.models import Department
 
 from .models import Budget, TaskBudget
 

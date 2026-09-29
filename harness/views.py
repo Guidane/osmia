@@ -1,8 +1,8 @@
 """The harness designer page and the JSON API it talks to.
 
 The API keeps the stand-alone designer's shapes (see harness/static/harness/
-designer.js), so the editor works unchanged; devices and users now come from
-Osmia's Devices and Users modules.
+designer.js). Devices and users come from Osmia's Devices and Users modules and
+are read-only here: devices are created and edited only in the Devices module.
 """
 import json
 
@@ -12,7 +12,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import Http404, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_GET, require_http_methods
 from django.views.generic import ListView
 
 from devices.models import Device
@@ -25,7 +25,7 @@ class ProjectListView(LoginRequiredMixin, ListView):
     template_name = 'harness/harnessproject_list.html'  # the queryset becomes a list
 
     def get_queryset(self):
-        projects = list(HarnessProject.objects.select_related('created_by'))
+        projects = list(HarnessProject.objects.select_related('created_by').prefetch_related('images'))
         for p in projects:
             p.counts = p.stats()
         return projects
@@ -37,6 +37,9 @@ def designer(request):
         'api_base': reverse('harness:api_devices').removesuffix('/devices'),
         'users_url': reverse('users:list'),
         'devices_url': reverse('devices:list'),
+        'devices_create_url': reverse('devices:create'),
+        # '0' is replaced by the open project's id
+        'images_url': reverse('harness:project_images', args=[0]),
     })
 
 
@@ -47,30 +50,17 @@ def _json_body(request):
         return None
 
 
-# -- Devices -------------------------------------------------------------------
+# -- Devices (read-only) -------------------------------------------------------
 
 @login_required
-@require_http_methods(['GET', 'POST'])
+@require_GET
 def api_devices(request):
-    if request.method == 'GET':
-        devices = Device.objects.prefetch_related('connectors__pins', 'connectors__part')
-        return JsonResponse([d.to_harness() for d in devices], safe=False)
-    data = _json_body(request)
-    if not isinstance(data, dict):
-        return HttpResponseBadRequest('Expected a JSON object.')
-    if data.get('id'):
-        device = get_object_or_404(Device, pk=data['id'])
-    else:
-        origin = data.get('origin') if data.get('origin') in Device.Origin.values else Device.Origin.IN_HOUSE
-        device = Device(origin=origin, role=Device.Role.PRODUCT if origin == Device.Origin.IN_HOUSE else Device.Role.OTHER)
-    if data.get('origin') in Device.Origin.values:
-        device.origin = data['origin']
-    device.apply_definition(data)
-    device.snapshot(request.user)
-    return JsonResponse(device.to_harness())
+    devices = Device.objects.prefetch_related('connectors__pins', 'connectors__part')
+    return JsonResponse([d.to_harness() for d in devices], safe=False)
 
 
 @login_required
+@require_GET
 def api_device(request, pk):
     device = get_object_or_404(Device, pk=pk)
     version = request.GET.get('version')
@@ -79,22 +69,6 @@ def api_device(request, pk):
         if snap is None:
             raise Http404
         return JsonResponse({**snap.data, 'id': str(device.pk), 'version': snap.version, 'url': device.get_absolute_url()})
-    return JsonResponse(device.to_harness())
-
-
-@login_required
-def api_device_versions(request, pk):
-    device = get_object_or_404(Device, pk=pk)
-    return JsonResponse({'versions': sorted(device.versions.values_list('version', flat=True))})
-
-
-@login_required
-@require_http_methods(['POST'])
-def api_device_activate(request, pk, version):
-    device = get_object_or_404(Device, pk=pk)
-    if not device.versions.filter(version=version).exists():
-        return JsonResponse({'error': 'version not found'}, status=404)
-    device.activate_version(version)
     return JsonResponse(device.to_harness())
 
 
@@ -162,3 +136,10 @@ def api_users(request):
     """Osmia's users, in the designer's {id, name} format (read-only here)."""
     users = get_user_model().objects.filter(is_active=True)
     return JsonResponse({'users': [{'id': str(u.pk), 'name': str(u)} for u in users]})
+
+
+@login_required
+def project_images(request, pk):
+    """Photos of a project's harnesses (the designer itself has no room for them)."""
+    project = get_object_or_404(HarnessProject, pk=pk)
+    return render(request, 'harness/project_images.html', {'project': project})

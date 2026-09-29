@@ -9,7 +9,7 @@ class TasksConfig(OsmiaModuleConfig):
         description='Plan and track work across the team.',
         icon='✅',
         sequence=20,
-        depends=('users',),
+        depends=('users', 'departments'),
         menu=(
             MenuItem('Board', 'tasks:board'),
             MenuItem('List', 'tasks:list'),

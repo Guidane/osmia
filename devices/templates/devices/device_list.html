@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% block content %}
 <div class="toolbar">
   <h1>Devices</h1>
@@ -23,7 +24,7 @@
   <tbody>
   {% for d in object_list %}
     <tr>
-      <td><span class="swatch" style="background: {{ d.color }}"></span> <a href="{{ d.get_absolute_url }}">{{ d.name }}</a></td>
+      <td><span class="swatch" style="background: {{ d.color }}"></span> {% cover_thumb d 28 %} <a href="{{ d.get_absolute_url }}">{{ d.name }}</a></td>
       <td>{{ d.part_number }}</td>
       <td>{% if d.is_external %}<span class="badge">{{ d.manufacturer|default:"External" }}</span>{% else %}<span class="badge in_progress">Us</span>{% endif %}</td>
       <td>{{ d.get_role_display }}</td>

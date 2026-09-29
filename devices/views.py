@@ -18,7 +18,7 @@ class DeviceListView(LoginRequiredMixin, ListView):
     model = Device
 
     def get_queryset(self):
-        qs = Device.objects.select_related('responsible', 'assembly').annotate(
+        qs = Device.objects.select_related('responsible', 'assembly').prefetch_related('images').annotate(
             connector_count=Count('connectors', distinct=True), pin_count=Count('connectors__pins'),
         )
         g = self.request.GET
@@ -38,17 +38,23 @@ class DeviceListView(LoginRequiredMixin, ListView):
 
 
 class DeviceDetailView(LoginRequiredMixin, DetailView):
+    """Sidebar with the device's connectors; the right side shows the chosen
+    connector's pins (?connector=<id>) or, by default, the device details."""
+
     model = Device
 
     def get_context_data(self, **kwargs):
         d = self.object
-        connectors = d.connectors.select_related('part').prefetch_related('pins')
-        return super().get_context_data(
-            **kwargs,
-            connectors=connectors,
-            versions=d.versions.select_related('created_by')[:20],
-            panels=hooks.collect('device_detail_panels', self.request, d),
-        )
+        connectors = list(d.connectors.select_related('part').prefetch_related('pins'))
+        wanted = self.request.GET.get('connector', '')
+        selected = next((c for c in connectors if str(c.pk) == wanted), None)
+        context = {'connectors': connectors, 'selected': selected}
+        if selected is None:
+            context.update(
+                versions=d.versions.select_related('created_by')[:20],
+                panels=hooks.collect('device_detail_panels', self.request, d),
+            )
+        return super().get_context_data(**kwargs, **context)
 
 
 class DeviceFormMixin(LoginRequiredMixin):
@@ -123,7 +129,7 @@ def connector_form(request, device_pk, pk=None):
         messages.success(request, f'{connector.designator} saved.' + (f' Device is now v{device.version}.' if new_version else ''))
         if request.POST.get('continue'):
             return redirect('devices:connector_edit', device.pk, connector.pk)
-        return redirect(device)
+        return redirect(f'{device.get_absolute_url()}?connector={connector.pk}')
     return render(request, 'devices/connector_form.html', {
         'device': device, 'connector': connector, 'form': form, 'formset': formset,
         'heading': f'{device.name} · {connector.designator}' if pk else f'{device.name} · new connector',

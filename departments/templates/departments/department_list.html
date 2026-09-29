@@ -2,7 +2,7 @@
 {% block content %}
 <div class="toolbar">
   <h1>Departments</h1>
-  {% if perms.users.add_department %}<a class="btn primary" href="{% url 'users:department_create' %}">New department</a>{% endif %}
+  {% if perms.departments.add_department %}<a class="btn primary" href="{% url 'departments:create' %}">New department</a>{% endif %}
 </div>
 <table class="list">
   <thead><tr><th>Department</th><th class="num">Members</th></tr></thead>

@@ -1,3 +1,4 @@
+from . import hooks
 from .modules import get_module, installed_modules
 
 
@@ -7,4 +8,6 @@ def osmia(request):
     return {
         'osmia_modules': installed_modules(),
         'current_module': current,
+        # e.g. the notifications bell from Automations
+        'topbar_items': hooks.collect('topbar_items', request) if request.user.is_authenticated else [],
     }

@@ -1,13 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Department, User
-
-
-@admin.register(Department)
-class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ('__str__', 'parent')
-    search_fields = ('name',)
+from .models import User
 
 
 @admin.register(User)

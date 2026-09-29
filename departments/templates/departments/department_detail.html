@@ -2,8 +2,8 @@
 {% block content %}
 <div class="toolbar">
   <h1>{% for a in department.ancestors %}{% if not forloop.last %}<a class="muted" href="{{ a.get_absolute_url }}">{{ a.name }}</a> › {% endif %}{% endfor %}{{ department.name }}</h1>
-  {% if perms.users.add_department %}<a class="btn" href="{% url 'users:department_create' %}?parent={{ department.pk }}">Add sub-department</a>{% endif %}
-  {% if perms.users.change_department %}<a class="btn" href="{% url 'users:department_edit' department.pk %}">Edit</a>{% endif %}
+  {% if perms.departments.add_department %}<a class="btn" href="{% url 'departments:create' %}?parent={{ department.pk }}">Add sub-department</a>{% endif %}
+  {% if perms.departments.change_department %}<a class="btn" href="{% url 'departments:edit' department.pk %}">Edit</a>{% endif %}
 </div>
 
 <div class="grid-2">

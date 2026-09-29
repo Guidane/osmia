@@ -1,39 +1,24 @@
-"""Import data from the stand-alone Wire Harness Designer folder.
+"""Import projects and signal rules from the stand-alone Wire Harness Designer.
 
+    python manage.py import_harness_devices "C:/.../python code/harness"   # Devices module, first
     python manage.py import_harness "C:/.../python code/harness"
 
-Brings in every device (all versions, current one active), every project (all
-versions, with device references re-pointed to the new devices), and the
-signal rules. Harness "users" are matched to Osmia users by username or full
-name; unmatched owners are left blank. Running it twice imports twice, so
-it's meant to be run once.
+Devices are created only by the Devices module, so this command never creates
+one: each project's devices are matched to devices already in Devices (by name
+and part number, as ``import_harness_devices`` created them). Every project
+comes in with all its versions; the signal rules are merged in.
 """
-import json
 from pathlib import Path
 
-from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from devices.models import Device, DeviceVersion
+from devices.management.commands.import_harness_devices import current_definition, find_device, read_json, versions_of
 from harness.models import HarnessProject, HarnessProjectVersion, SignalRule
 
 
-def read_json(path):
-    with open(path, encoding='utf-8') as f:
-        return json.load(f)
-
-
-def versions_of(item_dir):
-    """[(version, data), ...] ascending, and the current version number."""
-    numbers = sorted(int(p.stem) for p in item_dir.glob('*.json') if p.stem.isdigit())
-    pointer = item_dir / 'pointer.json'
-    current = read_json(pointer).get('current') if pointer.exists() else (numbers[-1] if numbers else None)
-    return [(n, read_json(item_dir / f'{n}.json')) for n in numbers], current
-
-
 class Command(BaseCommand):
-    help = 'Import devices, projects and signal rules from a Wire Harness Designer folder.'
+    help = 'Import projects and signal rules from a Wire Harness Designer folder (devices must be imported first).'
 
     def add_arguments(self, parser):
         parser.add_argument('folder')
@@ -44,22 +29,22 @@ class Command(BaseCommand):
         if not (root / 'devices').is_dir():
             raise CommandError(f'{root} has no devices/ folder; is this the harness app?')
 
-        users = self.match_users(root)
-        device_ids = {}
+        device_ids, missing = {}, []
         for item_dir in sorted(p for p in (root / 'devices').iterdir() if p.is_dir()):
-            versions, current = versions_of(item_dir)
-            if not versions:
-                continue
-            device = Device.objects.create(name=versions[-1][1].get('name') or item_dir.name)
-            for number, data in versions:
-                data = {**data, 'responsible_user_id': users.get(data.get('responsible_user_id'))}
-                device.apply_definition(data)
-                DeviceVersion.objects.create(device=device, version=number, data=device.definition())
-            device.activate_version(current)
-            device_ids[item_dir.name] = str(device.pk)
-            self.stdout.write(f'  device {device.name}: {len(versions)} version(s), now v{current}')
+            data = current_definition(item_dir)
+            device = find_device(data) if data else None
+            if device:
+                device_ids[item_dir.name] = str(device.pk)
+            elif data:
+                missing.append(data.get('name') or item_dir.name)
+        if missing:
+            raise CommandError(
+                f'These devices are not in Devices yet: {", ".join(missing)}. '
+                f'Run "manage.py import_harness_devices {folder}" first.'
+            )
 
-        for item_dir in sorted(p for p in (root / 'projects').iterdir() if p.is_dir()) if (root / 'projects').is_dir() else []:
+        projects_dir = root / 'projects'
+        for item_dir in sorted(p for p in projects_dir.iterdir() if p.is_dir()) if projects_dir.is_dir() else []:
             versions, current = versions_of(item_dir)
             if not versions:
                 continue
@@ -78,22 +63,4 @@ class Command(BaseCommand):
             pairs = read_json(rules).get('pairs', [])
             SignalRule.replace_all(SignalRule.pairs() + pairs)
             self.stdout.write(f'  signal rules: {len(pairs)} imported')
-        self.stdout.write(self.style.SUCCESS('Harness data imported.'))
-
-    def match_users(self, root):
-        """{harness user id: Osmia user pk as str}, matched by name."""
-        path = root / 'settings' / 'users.json'
-        if not path.exists():
-            return {}
-        by_name = {}
-        for u in get_user_model().objects.all():
-            by_name[u.username.lower()] = u
-            by_name[str(u).lower()] = u
-        matched = {}
-        for u in read_json(path).get('users', []):
-            user = by_name.get((u.get('name') or '').strip().lower())
-            if user:
-                matched[u['id']] = str(user.pk)
-            else:
-                self.stdout.write(f'  no Osmia user named "{u.get("name")}"; their devices get no owner')
-        return matched
+        self.stdout.write(self.style.SUCCESS('Harness projects imported.'))

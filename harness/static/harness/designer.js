@@ -20,6 +20,111 @@ function api(path, opts = {}) {
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
+// ---------- View: zoom (mouse wheel) and pan (drag empty space) ----------
+// Device positions and hit tests stay in "world" coordinates; the view maps
+// them to the screen: screen = world * scale + offset.
+const view = { scale: 1, x: 20, y: 20 };
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 4;
+const canvasWrap = document.getElementById("canvas-wrap");
+
+function viewportSize() {
+  // Fallback for a hidden/unsized page (e.g. before layout).
+  return { w: canvasWrap.clientWidth || 1000, h: canvasWrap.clientHeight || 700 };
+}
+
+// The canvas fills the visible area (sharp on high-DPI screens).
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const { w, h } = viewportSize();
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  canvas.width = Math.max(1, Math.round(w * dpr));
+  canvas.height = Math.max(1, Math.round(h * dpr));
+}
+
+function toWorld(sx, sy) {
+  return { x: (sx - view.x) / view.scale, y: (sy - view.y) / view.scale };
+}
+
+function toScreen(wx, wy) {
+  return { x: wx * view.scale + view.x, y: wy * view.scale + view.y };
+}
+
+// Zoom by `factor`, keeping the world point under (sx, sy) where it is.
+function zoomAt(sx, sy, factor) {
+  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * factor));
+  const anchor = toWorld(sx, sy);
+  view.scale = scale;
+  view.x = sx - anchor.x * scale;
+  view.y = sy - anchor.y * scale;
+  render();
+}
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  zoomAt(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-e.deltaY * 0.0015));
+}, { passive: false });
+
+// The area taken by the devices wired into harnesses (all devices when there
+// are no harnesses yet), in world coordinates.
+function contentBounds() {
+  const wired = new Set();
+  for (const harness of state.project.harnesses) {
+    wired.add(harness.from_instance);
+    for (const branch of harness.branches) wired.add(branch.to_instance);
+  }
+  const inHarness = state.project.instances.filter(i => wired.has(i.instance_id));
+  const instances = inHarness.length ? inHarness : state.project.instances;
+  let box = null;
+  for (const inst of instances) {
+    const device = state.devices[inst.device_id];
+    if (!device) continue;
+    const { width, height } = deviceBoxSize(device);
+    const margin = CONN_W + LOOP_LEG;  // connectors and loop-backs stick out sideways
+    const b = { minX: inst.x - margin, minY: inst.y, maxX: inst.x + width + margin, maxY: inst.y + height };
+    box = box ? {
+      minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY),
+      maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY),
+    } : b;
+  }
+  return box;
+}
+
+// Centre the view on the middle of the harnesses, zooming out only if they
+// don't fit (never zooming in past 100%).
+function centerView() {
+  resizeCanvas();
+  const { w, h } = viewportSize();
+  const box = contentBounds();
+  if (!box) {
+    view.scale = 1;
+    view.x = 20;
+    view.y = 20;
+  } else {
+    const pad = 40;
+    const fit = Math.min((w - 2 * pad) / Math.max(1, box.maxX - box.minX), (h - 2 * pad) / Math.max(1, box.maxY - box.minY));
+    view.scale = Math.max(MIN_SCALE, Math.min(1, fit));
+    view.x = w / 2 - ((box.minX + box.maxX) / 2) * view.scale;
+    view.y = h / 2 - ((box.minY + box.maxY) / 2) * view.scale;
+  }
+  render();
+}
+
+function applyViewDecorations() {
+  // The dotted grid moves and scales with the view.
+  const grid = 20 * view.scale;
+  canvasWrap.style.backgroundSize = `${grid}px ${grid}px`;
+  canvasWrap.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  const level = document.getElementById("zoom-level");
+  if (level) level.textContent = `${Math.round(view.scale * 100)}%`;
+  positionPinoutHint();
+}
+
+if (window.ResizeObserver) new ResizeObserver(() => { resizeCanvas(); render(); }).observe(canvasWrap);
+else window.addEventListener("resize", () => { resizeCanvas(); render(); });
+
 const state = {
   devices: {},        // deviceId -> full device object (cache)
   project: { id: null, name: "Untitled Harness", instances: [], harnesses: [] },
@@ -72,13 +177,29 @@ function pinKey(instanceId, connectorId, pinId) {
   return `${instanceId}::${connectorId}::${pinId}`;
 }
 
+// A loop branch wires pins of one connector to each other. It sits on the
+// trunk connector (to == trunk) or, marked `loop: true`, on any other connector
+// of the harness. Both ends of its wires are on (to_instance, to_connector).
+function isLoopBranch(harness, branch) {
+  return !!branch.loop || (branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector);
+}
+
+// The connector a wire's first end (from_pin) is on: the trunk, or for a loop
+// branch the loop's own connector.
+function fromEndOf(harness, branch) {
+  return isLoopBranch(harness, branch)
+    ? { instanceId: branch.to_instance, connectorId: branch.to_connector }
+    : { instanceId: harness.from_instance, connectorId: harness.from_connector };
+}
+
 // Every pin already wired into any harness/branch in the current project.
 function usedPinKeys() {
   const used = new Set();
   for (const harness of state.project.harnesses) {
     for (const branch of harness.branches) {
+      const from = fromEndOf(harness, branch);
       for (const conn of branch.connections) {
-        used.add(pinKey(harness.from_instance, harness.from_connector, conn.from_pin));
+        used.add(pinKey(from.instanceId, from.connectorId, conn.from_pin));
         used.add(pinKey(branch.to_instance, branch.to_connector, conn.to_pin));
       }
     }
@@ -218,8 +339,7 @@ function harnessGeometry(harness) {
   const branchGeo = [];
   const loopbackBranches = [];
   for (const branch of harness.branches) {
-    const isLoopback = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
-    if (isLoopback) { loopbackBranches.push(branch); continue; }
+    if (isLoopBranch(harness, branch)) { loopbackBranches.push(branch); continue; }
     const toInst = getInstance(branch.to_instance);
     if (!toInst) continue;
     const toDevice = state.devices[toInst.device_id];
@@ -241,10 +361,18 @@ function harnessGeometry(harness) {
     };
   }
 
-  const loopbackGeo = loopbackBranches.map((branch, idx) => ({
-    branch,
-    hairpin: loopbackHairpin(fromDevPos, idx),
-  }));
+  // Each loop is drawn on its own connector; several on one connector stack up.
+  const perConnector = {};
+  const loopbackGeo = [];
+  for (const branch of loopbackBranches) {
+    const inst = getInstance(branch.to_instance);
+    const device = inst && state.devices[inst.device_id];
+    const pos = device && connectorSquarePosition(inst, device, branch.to_connector);
+    if (!pos) continue;
+    const key = `${branch.to_instance}::${branch.to_connector}`;
+    const idx = perConnector[key] = (perConnector[key] ?? -1) + 1;
+    loopbackGeo.push({ branch, hairpin: loopbackHairpin(pos, idx) });
+  }
 
   return { fromInst, fromDevice, fromDevPos, branchGeo, splitPoint, loopbackGeo };
 }
@@ -274,7 +402,11 @@ function loopbackHairpin(fromDevPos, loopIndex) {
 // ---------- Rendering ----------
 
 function render() {
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
+  applyViewDecorations();
 
   for (const harness of state.project.harnesses) {
     drawHarness(harness, harness.id === state.selectedHarness);
@@ -550,7 +682,7 @@ function canvasMouseDown(e) {
   if (harnessId) {
     state.pendingConnectorFrom = null;
     updateLoopbackButton();
-    selectHarness(harnessId);
+    selectHarness(harnessId, { x, y });
     render();
     return;
   }
@@ -560,30 +692,63 @@ function canvasMouseDown(e) {
     return;
   }
 
-  state.pendingConnectorFrom = null;
-  updateLoopbackButton();
-  selectNone();
-  render();
+  // Empty space: dragging pans the view; a plain click (no drag) deselects.
+  const s = screenPosFromEvent(e);
+  state.panning = { sx: s.x, sy: s.y, vx: view.x, vy: view.y, moved: false };
+  canvas.style.cursor = "grabbing";
 }
 
 function canvasMouseMove(e) {
-  const { x, y } = mousePosFromEvent(e);
+  if (state.panning) {
+    const s = screenPosFromEvent(e);
+    const dx = s.x - state.panning.sx;
+    const dy = s.y - state.panning.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) state.panning.moved = true;
+    view.x = state.panning.vx + dx;
+    view.y = state.panning.vy + dy;
+    render();
+    return;
+  }
 
+  const { x, y } = mousePosFromEvent(e);
   if (state.dragging) {
     const inst = getInstance(state.dragging.instance_id);
-    inst.x = Math.max(0, x - state.dragging.offsetX);
-    inst.y = Math.max(0, y - state.dragging.offsetY);
+    inst.x = x - state.dragging.offsetX;
+    inst.y = y - state.dragging.offsetY;
     render();
   }
 }
 
 function canvasMouseUp() {
   state.dragging = null;
+  if (state.panning) {
+    const wasClick = !state.panning.moved;
+    state.panning = null;
+    canvas.style.cursor = "";
+    if (wasClick) {
+      state.pendingConnectorFrom = null;
+      updateLoopbackButton();
+      selectNone();
+      render();
+    }
+  }
 }
 
-function mousePosFromEvent(e) {
+function canvasMouseLeave() {
+  state.dragging = null;
+  state.panning = null;
+  canvas.style.cursor = "";
+}
+
+function screenPosFromEvent(e) {
   const rect = canvas.getBoundingClientRect();
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+// World coordinates of the mouse (what hit tests and placement use).
+function mousePosFromEvent(e) {
+  const s = screenPosFromEvent(e);
+  return toWorld(s.x, s.y);
 }
 
 // Shows a "Loop Back this connector instead" button whenever a connector is
@@ -607,6 +772,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (connectModal && !connectModal.classList.contains("hidden")) {
       closeConnectModal();
+    } else if (state.pinoutOpen) {
+      closePinout();
     }
     state.pendingConnectorFrom = null;
     updateLoopbackButton();
@@ -614,6 +781,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Delete" || e.key === "Backspace") {
     if (document.activeElement && ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+    if (document.querySelector(".modal:not(.hidden)")) return;  // never act behind an open popup
     if (state.selectedInstance) deleteInstance(state.selectedInstance);
     else if (state.selectedHarness) deleteHarness(state.selectedHarness);
   }
@@ -622,7 +790,7 @@ document.addEventListener("keydown", (e) => {
 canvas.addEventListener("mousedown", canvasMouseDown);
 canvas.addEventListener("mousemove", canvasMouseMove);
 canvas.addEventListener("mouseup", canvasMouseUp);
-canvas.addEventListener("mouseleave", canvasMouseUp);
+canvas.addEventListener("mouseleave", canvasMouseLeave);
 
 // ---------- Harness creation ----------
 // A harness has one trunk connector (from_instance/from_connector) and a list
@@ -644,7 +812,7 @@ function findHarnessContainingConnector(instanceId, connectorId) {
     }
   }
   for (const harness of state.project.harnesses) {
-    const branch = harness.branches.find(b => b.to_instance === instanceId && b.to_connector === connectorId);
+    const branch = harness.branches.find(b => !isLoopBranch(harness, b) && b.to_instance === instanceId && b.to_connector === connectorId);
     if (branch) return { harness, role: "branch", branch };
   }
   return null;
@@ -656,25 +824,14 @@ function findHarnessContainingConnector(instanceId, connectorId) {
 // correct from the new trunk's point of view.
 function rerootHarness(harness, newTrunkConn) {
   const branchIdx = harness.branches.findIndex(
-    b => b.to_instance === newTrunkConn.instance_id && b.to_connector === newTrunkConn.connector_id
+    b => !isLoopBranch(harness, b) && b.to_instance === newTrunkConn.instance_id && b.to_connector === newTrunkConn.connector_id
   );
   if (branchIdx < 0) return; // already the trunk, or not part of this harness — nothing to do
 
   const newTrunkBranch = harness.branches[branchIdx];
-  const isOldTrunkLoopback = b => b.to_instance === harness.from_instance && b.to_connector === harness.from_connector;
-  const oldLoopbacks = harness.branches.filter(isOldTrunkLoopback);
-  if (oldLoopbacks.length) {
-    state.project.harnesses.push({
-      id: genId(),
-      label: `H${state.project.harnesses.length + 1}`,
-      from_instance: harness.from_instance,
-      from_connector: harness.from_connector,
-      from_harness_connector: harness.from_harness_connector,
-      from_verified: harness.from_verified,
-      branches: oldLoopbacks,
-    });
-    harness.branches = harness.branches.filter(b => !isOldTrunkLoopback(b));
-  }
+  // Loops stay in the harness: the old trunk's loops keep looping on that
+  // connector (now marked `loop`), loops on the new trunk simply become trunk loops.
+  for (const b of harness.branches) if (isLoopBranch(harness, b)) b.loop = true;
   const oldTrunk = {
     to_instance: harness.from_instance,
     to_connector: harness.from_connector,
@@ -709,13 +866,12 @@ function resolveHarnessTarget(fromConn, toConn) {
   // Loopback: never re-root. Re-rooting would move an existing harness's trunk
   // onto this connector, so the harness would re-attach and its split point
   // and mating-connector names would change after the initial connection.
-  // Join a harness only if this connector is already its trunk; otherwise the
-  // loopback gets its own harness anchored on this connector.
+  // It joins the harness this connector already belongs to, as its trunk or as
+  // one of its destinations (stored as a `loop` branch on that connector); only
+  // a connector that isn't in any harness gets a new harness for its loopback.
   if (fromConn.instance_id === toConn.instance_id && fromConn.connector_id === toConn.connector_id) {
-    const trunkHarness = state.project.harnesses.find(
-      h => h.from_instance === fromConn.instance_id && h.from_connector === fromConn.connector_id
-    );
-    return { existingHarness: trunkHarness || null, effectiveFromConn: fromConn, effectiveToConn: toConn };
+    const match = findHarnessContainingConnector(fromConn.instance_id, fromConn.connector_id);
+    return { existingHarness: match ? match.harness : null, effectiveFromConn: fromConn, effectiveToConn: toConn };
   }
   const matchFrom = findHarnessContainingConnector(fromConn.instance_id, fromConn.connector_id);
   if (matchFrom) {
@@ -749,7 +905,11 @@ function commitBranch(existingHarness, fromConn, toConn, pinPairs, reroot = null
     state.project.harnesses.push(harness);
   }
 
-  let branch = harness.branches.find(b => b.to_instance === toConn.instance_id && b.to_connector === toConn.connector_id);
+  // A loopback goes to the loop branch on its connector, other wires to the
+  // ordinary branch; a connector can have both in the same harness.
+  const wantLoop = fromConn.instance_id === toConn.instance_id && fromConn.connector_id === toConn.connector_id;
+  let branch = harness.branches.find(b => b.to_instance === toConn.instance_id && b.to_connector === toConn.connector_id
+    && isLoopBranch(harness, b) === wantLoop);
   if (!branch) {
     branch = {
       id: genId(),
@@ -759,6 +919,7 @@ function commitBranch(existingHarness, fromConn, toConn, pinPairs, reroot = null
       to_verified: false, // confirmed by this destination device's responsible user
       connections: [],
     };
+    if (wantLoop) branch.loop = true;
     harness.branches.push(branch);
   }
 
@@ -846,7 +1007,7 @@ function openAddWiresModalForHarness(harness) {
   for (const branch of harness.branches) {
     const toInst = getInstance(branch.to_instance);
     if (!toInst) continue;
-    const isLoop = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
+    const isLoop = isLoopBranch(harness, branch);
     const toName = toInst.label || state.devices[toInst.device_id]?.name || "?";
     unitSelect.appendChild(new Option(isLoop ? `↻ Loop back ${branch.to_connector}` : `${toName}.${branch.to_connector}`, branch.id));
   }
@@ -860,7 +1021,9 @@ function openAddWiresModalForHarness(harness) {
     const branch = harness.branches.find(b => b.id === unitSelect.value);
     const toConn = { instance_id: branch.to_instance, connector_id: branch.to_connector };
     const toConnector = getConnector(state.devices[getInstance(branch.to_instance).device_id], branch.to_connector);
-    applyConnectTarget(harness, fromConn, toConn, fromConnector, toConnector);
+    // A loop's wires start on the loop's own connector, not the trunk.
+    if (isLoopBranch(harness, branch)) applyConnectTarget(harness, toConn, toConn, toConnector, toConnector);
+    else applyConnectTarget(harness, fromConn, toConn, fromConnector, toConnector);
   }
   unitSelect.onchange = loadSelectedUnit;
   connectModalState = null;
@@ -1139,8 +1302,8 @@ function placeDevice(deviceId, x, y) {
     instance_id: genId(),
     device_id: deviceId,
     device_version: device.version, // records which device version was used when placed
-    x: Math.max(0, x - width / 2),
-    y: Math.max(0, y - height / 2),
+    x: x - width / 2,
+    y: y - height / 2,
     label: "",
   };
 
@@ -1187,15 +1350,22 @@ function selectInstance(instanceId) {
   renderProps();
   renderHarnessList();
   hideDrawer();
+  hidePinoutHint();
 }
 
-function selectHarness(harnessId) {
+// Selecting a harness shows a small "Show pinout" hint (at `at`, e.g. where the
+// wire was clicked, or else next to the harness); the pinout table itself
+// opens in a popup only when the hint is clicked.
+function selectHarness(harnessId, at = null) {
+  const changed = state.selectedHarness !== harnessId;
   state.selectedHarness = harnessId;
   state.selectedInstance = null;
+  if (changed) state.pinoutOpen = false;
   render();
   renderProps();
   renderHarnessList();
   renderDrawer();
+  if (!state.pinoutOpen) showPinoutHint(at || harnessAnchor(getHarness(harnessId)));
 }
 
 function selectNone() {
@@ -1204,7 +1374,59 @@ function selectNone() {
   renderProps();
   renderHarnessList();
   hideDrawer();
+  hidePinoutHint();
 }
+
+// A point on the harness line: halfway to its first destination, or at its loop.
+function harnessAnchor(harness) {
+  const geo = harness && harnessGeometry(harness);
+  if (!geo) return null;
+  if (geo.branchGeo.length) {
+    const to = geo.branchGeo[0].toDevPos;
+    return { x: (geo.fromDevPos.x + to.x) / 2, y: (geo.fromDevPos.y + to.y) / 2 };
+  }
+  if (geo.loopbackGeo.length) return { x: geo.loopbackGeo[0].hairpin.farX, y: geo.loopbackGeo[0].hairpin.centerY };
+  return { x: geo.fromDevPos.x, y: geo.fromDevPos.y };
+}
+
+function showPinoutHint(at) {
+  const hint = document.getElementById("pinout-hint");
+  state.hintAt = at;
+  if (!at) { hint.classList.add("hidden"); return; }
+  hint.classList.remove("hidden");
+  positionPinoutHint();
+}
+
+function positionPinoutHint() {
+  if (!state.hintAt) return;
+  const s = toScreen(state.hintAt.x, state.hintAt.y);
+  const hint = document.getElementById("pinout-hint");
+  hint.style.left = `${Math.round(s.x + 10)}px`;
+  hint.style.top = `${Math.round(s.y + 10)}px`;
+}
+
+function hidePinoutHint() {
+  document.getElementById("pinout-hint").classList.add("hidden");
+}
+
+function openPinout() {
+  if (!state.selectedHarness) return;
+  state.pinoutOpen = true;
+  hidePinoutHint();
+  renderDrawer();
+}
+
+function closePinout() {
+  state.pinoutOpen = false;
+  hideDrawer();
+  if (state.selectedHarness) showPinoutHint(harnessAnchor(getHarness(state.selectedHarness)));
+}
+
+document.getElementById("pinout-hint").onclick = openPinout;
+// Clicking the dark backdrop around the popup closes it.
+document.getElementById("drawer").addEventListener("mousedown", (e) => {
+  if (e.target.id === "drawer") closePinout();
+});
 
 // The selected device or harness is edited in the bar above the canvas.
 function renderProps() {
@@ -1258,17 +1480,6 @@ function mkInput(labelText, value, onChange) {
   return label;
 }
 
-function verifyCheckboxRow(labelText, checked, onChange) {
-  const label = document.createElement("label");
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.checked = checked;
-  cb.onchange = () => onChange(cb.checked);
-  label.appendChild(cb);
-  label.appendChild(document.createTextNode(" " + labelText));
-  return label;
-}
-
 // The harness dropdown in the bar above the canvas.
 function renderHarnessList() {
   const select = document.getElementById("harness-select");
@@ -1289,7 +1500,7 @@ document.getElementById("harness-select").onchange = (e) => {
   else { selectNone(); render(); }
 };
 
-// ---------- Bottom drawer: dense pinout table ----------
+// ---------- Pinout popup: dense pinout table ----------
 
 function hideDrawer() {
   document.getElementById("drawer").classList.add("hidden");
@@ -1298,7 +1509,7 @@ function hideDrawer() {
 function renderDrawer() {
   const harness = getHarness(state.selectedHarness);
   const drawer = document.getElementById("drawer");
-  if (!harness) { drawer.classList.add("hidden"); return; }
+  if (!harness || !state.pinoutOpen) { drawer.classList.add("hidden"); return; }
   drawer.classList.remove("hidden");
 
   const fromInst = getInstance(harness.from_instance);
@@ -1315,10 +1526,9 @@ function renderDrawer() {
   const tbody = document.getElementById("conn-table-body");
   tbody.innerHTML = "";
 
-  // Sub-headers sit right above the Pin columns they describe; a blank cell
-  // means "still the same connector as above."
+  // Sub-headers sit right above the Pin columns they describe. The source
+  // connector is the same for every destination, so it's only shown once.
   let lastFromHeaderText = null;
-  let lastToHeaderText = null;
 
   for (const branch of harness.branches) {
     const toInst = getInstance(branch.to_instance);
@@ -1327,9 +1537,13 @@ function renderDrawer() {
     const toConnector = getConnector(toDevice, branch.to_connector);
     const toName = toInst.label || toDevice.name;
     const toCtx = { instanceId: branch.to_instance, connectorId: branch.to_connector };
-    const isLoopback = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
+    const isLoopback = isLoopBranch(harness, branch);
+    // A loop's pins are both on its own connector (the trunk or another one).
+    const rowFromConnector = isLoopback ? toConnector : fromConnector;
+    const rowFromCtx = isLoopback ? toCtx : fromCtx;
+    const rowFromDevice = isLoopback ? toDevice : fromDevice;
 
-    const fromHeaderText = `${fromName}.${harness.from_connector}`;
+    const fromHeaderText = isLoopback ? `${toName}.${branch.to_connector}` : `${fromName}.${harness.from_connector}`;
     const toHeaderText = isLoopback ? "↻ Loop Back" : `${toName}.${branch.to_connector}`;
 
     const headerTr = document.createElement("tr");
@@ -1337,38 +1551,24 @@ function renderDrawer() {
 
     const leadTd = document.createElement("td");
     leadTd.colSpan = 2; // Owner(from), Verify(from)
-    if (branch === harness.branches[0]) {
-      leadTd.appendChild(connectorVerifyLabel(
-        `Plug ${harness.from_harness_connector || ""} on ${fromName}.${harness.from_connector} checked by ${userName(fromDevice && fromDevice.responsible_user_id)}`,
-        !!harness.from_verified, (checked) => { harness.from_verified = checked; },
-      ));
-    }
     headerTr.appendChild(leadTd);
 
     const fromHeadTd = document.createElement("td");
     fromHeadTd.className = "sub-header-cell";
-    if (fromHeaderText !== lastFromHeaderText) {
-      fromHeadTd.innerHTML = `<strong>${escapeHtml(fromHeaderText)}</strong>${connectorPartHtml(fromConnector)}`;
+    if (fromHeaderText !== lastFromHeaderText || isLoopback) {
+      fromHeadTd.innerHTML = `<strong>${escapeHtml(fromHeaderText)}</strong>${connectorPartHtml(rowFromConnector)}`;
       lastFromHeaderText = fromHeaderText;
     }
     headerTr.appendChild(fromHeadTd);
 
     const toHeadTd = document.createElement("td");
     toHeadTd.className = "sub-header-cell";
-    if (toHeaderText !== lastToHeaderText) {
-      toHeadTd.innerHTML = `<strong>${escapeHtml(toHeaderText)}</strong>${isLoopback ? "" : connectorPartHtml(toConnector)}`;
-      lastToHeaderText = toHeaderText;
-    }
+    // Every destination is its own connector (even when two units share a name), so it's always labelled.
+    toHeadTd.innerHTML = `<strong>${escapeHtml(toHeaderText)}</strong>${isLoopback ? "" : connectorPartHtml(toConnector)}`;
     headerTr.appendChild(toHeadTd);
 
     const trailTd = document.createElement("td");
     trailTd.colSpan = 5; // Verify(to), Owner(to), Wire type, AWG, Length
-    if (!isLoopback) {
-      trailTd.appendChild(connectorVerifyLabel(
-        `Plug ${branch.to_harness_connector || ""} on ${toName}.${branch.to_connector} checked by ${userName(toDevice && toDevice.responsible_user_id)}`,
-        !!branch.to_verified, (checked) => { branch.to_verified = checked; },
-      ));
-    }
     headerTr.appendChild(trailTd);
 
     const headerActionTd = document.createElement("td");
@@ -1383,32 +1583,43 @@ function renderDrawer() {
 
     for (const conn of branch.connections) {
       const tr = document.createElement("tr");
+      // A loopback wire takes two rows: both of its pins on the left (they're
+      // on the same connector), everything else merged over the two rows.
+      const span = isLoopback ? 2 : 1;
+      const merge = td => { td.rowSpan = span; return td; };
 
       const tdFromOwner = document.createElement("td");
       tdFromOwner.className = "conn-owner";
-      tdFromOwner.textContent = userName(fromDevice && fromDevice.responsible_user_id);
-      tr.appendChild(tdFromOwner);
+      tdFromOwner.textContent = userName(rowFromDevice && rowFromDevice.responsible_user_id);
+      tr.appendChild(merge(tdFromOwner));
 
       const tdFromVerify = document.createElement("td");
       const fromVerifyInput = document.createElement("input");
       fromVerifyInput.type = "checkbox";
       fromVerifyInput.checked = !!conn.from_verified;
-      fromVerifyInput.title = `Verified by ${userName(fromDevice && fromDevice.responsible_user_id)}`;
+      fromVerifyInput.title = `Verified by ${userName(rowFromDevice && rowFromDevice.responsible_user_id)}`;
       fromVerifyInput.onchange = () => { conn.from_verified = fromVerifyInput.checked; };
       tdFromVerify.appendChild(fromVerifyInput);
-      tr.appendChild(tdFromVerify);
+      tr.appendChild(merge(tdFromVerify));
 
-      tr.appendChild(pinSelectCell(fromConnector, fromCtx, conn.from_pin, usedKeys, (v) => { conn.from_pin = v; }));
-      tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
+      tr.appendChild(pinSelectCell(rowFromConnector, rowFromCtx, conn.from_pin, usedKeys, (v) => { conn.from_pin = v; }));
 
+      let loopSecondRow = null;
       if (isLoopback) {
-        // Both ends are on the trunk connector: one owner, verified once.
+        // The other side (where the far connector's pins would go) just says
+        // "loop back", merged over the wire's two rows.
         const tdLoop = document.createElement("td");
-        tdLoop.colSpan = 2; // Verify(to), Owner(to)
+        tdLoop.colSpan = 3; // Pin(to), Verify(to), Owner(to)
+        tdLoop.rowSpan = 2;
         tdLoop.className = "loop-indicator-cell";
-        tdLoop.textContent = "↻ loop back";
+        tdLoop.textContent = "↻ Loop back";
         tr.appendChild(tdLoop);
+        loopSecondRow = document.createElement("tr");
+        loopSecondRow.className = "loop-second-pin";
+        loopSecondRow.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
       } else {
+        tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
+
         const tdToVerify = document.createElement("td");
         const toVerifyInput = document.createElement("input");
         toVerifyInput.type = "checkbox";
@@ -1430,7 +1641,7 @@ function renderDrawer() {
       typeSelect.value = conn.wire_type || "none";
       typeSelect.onchange = () => { conn.wire_type = typeSelect.value; };
       tdType.appendChild(typeSelect);
-      tr.appendChild(tdType);
+      tr.appendChild(merge(tdType));
 
       const tdAwg = document.createElement("td");
       const awgInput = document.createElement("input");
@@ -1439,7 +1650,7 @@ function renderDrawer() {
       awgInput.value = conn.awg || "";
       awgInput.oninput = () => { conn.awg = awgInput.value; };
       tdAwg.appendChild(awgInput);
-      tr.appendChild(tdAwg);
+      tr.appendChild(merge(tdAwg));
 
       const tdLength = document.createElement("td");
       const lengthInput = document.createElement("input");
@@ -1448,7 +1659,7 @@ function renderDrawer() {
       lengthInput.value = conn.length || "";
       lengthInput.oninput = () => { conn.length = lengthInput.value; };
       tdLength.appendChild(lengthInput);
-      tr.appendChild(tdLength);
+      tr.appendChild(merge(tdLength));
 
       const tdDel = document.createElement("td");
       const delBtn = document.createElement("button");
@@ -1457,9 +1668,10 @@ function renderDrawer() {
       delBtn.title = "Delete connection";
       delBtn.onclick = () => deleteConnection(harness, branch, conn.id);
       tdDel.appendChild(delBtn);
-      tr.appendChild(tdDel);
+      tr.appendChild(merge(tdDel));
 
       tbody.appendChild(tr);
+      if (loopSecondRow) tbody.appendChild(loopSecondRow);
     }
   }
 
@@ -1471,6 +1683,7 @@ function renderDrawer() {
 // assigned here, so the field never loses its own selection.
 function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
   const td = document.createElement("td");
+  td.className = "pin-cell";
   const select = document.createElement("select");
   for (const pin of connector.pins) {
     const isUsedElsewhere = usedKeys.has(pinKey(ctx.instanceId, ctx.connectorId, pin.id)) && pin.id !== selectedPinId;
@@ -1492,16 +1705,9 @@ function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
 // the Part page in Osmia) and type, e.g. "DB25-F · D-sub 25 (female)".
 function connectorPartHtml(connector) {
   const part = connector && connector.part;
-  if (!part) return `<div class="conn-part muted">no connector part set</div>`;
+  if (!part) return "";
   const type = part.type && part.type !== part.part_number ? ` · ${escapeHtml(part.type)}` : "";
   return `<div class="conn-part"><a href="${escapeHtml(part.url)}" target="_blank" title="Open ${escapeHtml(part.part_number)} in Osmia">${escapeHtml(part.part_number)}</a>${type}</div>`;
-}
-
-function connectorVerifyLabel(title, checked, onChange) {
-  const label = verifyCheckboxRow("plug verified", checked, onChange);
-  label.className = "conn-verify-label";
-  label.title = title;
-  return label;
 }
 
 function renderAddConnRow(harness) {
@@ -1515,7 +1721,7 @@ function renderAddConnRow(harness) {
   container.appendChild(addBtn);
 }
 
-document.getElementById("btn-close-drawer").onclick = () => selectNone();
+document.getElementById("btn-close-drawer").onclick = () => closePinout();
 
 // ---------- CSV export of the harness table ----------
 // One row per wire, in the same order as the table, with
@@ -1547,18 +1753,23 @@ function harnessCsvRows(harness) {
     const toDevice = state.devices[toInst.device_id];
     const toConnector = getConnector(toDevice, branch.to_connector);
     const toName = toInst.label || toDevice.name;
-    const isLoopback = branch.to_instance === harness.from_instance && branch.to_connector === harness.from_connector;
+    const isLoopback = isLoopBranch(harness, branch);
+    const endConnector = isLoopback ? toConnector : fromConnector;
+    const endName = isLoopback ? toName : fromName;
+    const endConnectorId = isLoopback ? branch.to_connector : harness.from_connector;
+    const endPlug = isLoopback ? branch.to_harness_connector : harness.from_harness_connector;
+    const endDevice = isLoopback ? toDevice : fromDevice;
 
     for (const conn of branch.connections) {
-      const fp = pinDef(fromConnector, conn.from_pin);
+      const fp = pinDef(endConnector, conn.from_pin);
       const tp = pinDef(toConnector, conn.to_pin);
       rows.push([
         harness.label || "Harness", branchIdx + 1, yesNo(isLoopback),
-        fromName, harness.from_connector, partNumber(fromConnector), partType(fromConnector), harness.from_harness_connector || "",
+        endName, endConnectorId, partNumber(endConnector), partType(endConnector), endPlug || "",
         fp ? fp.label : conn.from_pin, fp ? fp.signal : "",
-        userName(fromDevice.responsible_user_id), yesNo(conn.from_verified),
+        userName(endDevice.responsible_user_id), yesNo(conn.from_verified),
         toName, branch.to_connector, partNumber(toConnector), partType(toConnector),
-        isLoopback ? harness.from_harness_connector || "" : branch.to_harness_connector || "",
+        isLoopback ? endPlug || "" : branch.to_harness_connector || "",
         tp ? tp.label : conn.to_pin, tp ? tp.signal : "",
         userName(toDevice.responsible_user_id), yesNo(isLoopback ? conn.from_verified : conn.to_verified),
         wireTypeLabel(conn.wire_type), conn.awg || "", conn.length || "",
@@ -1625,10 +1836,10 @@ function selectedLibraryDevice() {
   return id ? state.devices[id] : null;
 }
 
+// Devices are created and edited only in the Devices module; the designer
+// just links there for the chosen device.
 function updateDeviceButtons() {
   const device = selectedLibraryDevice();
-  document.getElementById("btn-edit-device").disabled = !device;
-  document.getElementById("btn-device-versions").disabled = !device;
   const open = document.getElementById("btn-open-device");
   open.classList.toggle("hidden", !(device && device.url));
   open.href = device && device.url ? device.url : "#";
@@ -1640,14 +1851,34 @@ document.getElementById("device-select").onchange = () => {
   setStatus(device ? `Click the canvas to place "${device.name}"` : "");
   updateDeviceButtons();
 };
-document.getElementById("btn-edit-device").onclick = () => {
-  const device = selectedLibraryDevice();
-  if (device) openDeviceModal(device);
+
+// Pick up devices added or edited in the Devices module (usually in another
+// tab): on the reload button, and whenever the designer tab gets focus again.
+let reloadingLibrary = false;
+async function reloadDevices() {
+  if (reloadingLibrary) return;
+  reloadingLibrary = true;
+  try {
+    await loadDeviceLibrary();
+    render();
+    renderProps();
+    renderHarnessList();
+    renderDrawer();
+  } finally {
+    reloadingLibrary = false;
+  }
+}
+document.getElementById("btn-center-view").onclick = centerView;
+document.getElementById("zoom-level").onclick = () => {
+  const { w, h } = viewportSize();
+  zoomAt(w / 2, h / 2, 1 / view.scale);  // back to 100%
 };
-document.getElementById("btn-device-versions").onclick = () => {
-  const device = selectedLibraryDevice();
-  if (device) openVersionsModal("device", device.id, device.version);
+
+document.getElementById("btn-reload-devices").onclick = async () => {
+  await reloadDevices();
+  setStatus("Devices reloaded");
 };
+window.addEventListener("focus", reloadDevices);
 
 function userName(userId) {
   if (!userId) return "Unassigned";
@@ -1669,139 +1900,6 @@ function escapeHtml(s) {
   div.textContent = s;
   return div.innerHTML;
 }
-
-// ---------- New Device modal ----------
-
-const deviceModal = document.getElementById("device-modal");
-const deviceModalTitle = document.getElementById("device-modal-title");
-const connectorBlocksEl = document.getElementById("connector-blocks");
-let connectorCounter = 0;
-let editingDeviceId = null;
-
-function openDeviceModal(device) {
-  editingDeviceId = device ? device.id : null;
-  deviceModalTitle.textContent = device ? `Edit Device — ${device.name}` : "New Device";
-  document.getElementById("dev-name").value = device ? device.name : "";
-  document.getElementById("dev-part").value = device ? (device.part_number || "") : "";
-  document.getElementById("dev-color").value = device ? (device.color || "#3b7dd8") : "#3b7dd8";
-  const userSelect = document.getElementById("dev-user");
-  userSelect.innerHTML = '<option value="">— unassigned —</option>';
-  for (const u of state.users) userSelect.appendChild(new Option(u.name, u.id));
-  userSelect.value = device ? (device.responsible_user_id || "") : "";
-  document.getElementById("dev-origin").value = device ? (device.origin || "in_house") : "in_house";
-  connectorBlocksEl.innerHTML = "";
-  connectorCounter = 0;
-  if (device) {
-    for (const connector of device.connectors) {
-      addConnectorBlock(connector.id, connector.side, connector.pins);
-    }
-  } else {
-    addConnectorBlock("J01", "left");
-    addConnectorBlock("J02", "right");
-  }
-  deviceModal.classList.remove("hidden");
-}
-
-function addConnectorBlock(defaultId, defaultSide, pins) {
-  connectorCounter += 1;
-  const block = document.createElement("div");
-  block.className = "connector-block";
-  block.innerHTML = `
-    <div class="connector-block-header">
-      <input type="text" class="conn-id" placeholder="Connector ID e.g. J01" value="${escapeHtml(defaultId || "J0" + connectorCounter)}">
-      <select class="conn-side">
-        <option value="left" ${defaultSide === "left" ? "selected" : ""}>Left side</option>
-        <option value="right" ${defaultSide === "right" ? "selected" : ""}>Right side</option>
-      </select>
-      <button type="button" class="conn-remove">✕</button>
-    </div>
-    <div class="conn-pin-rows"></div>
-    <div class="conn-pin-actions">
-      <button type="button" class="conn-add-pin">+ Add Pin</button>
-    </div>
-  `;
-  block.querySelector(".conn-remove").onclick = () => block.remove();
-  const pinRows = block.querySelector(".conn-pin-rows");
-  block.querySelector(".conn-add-pin").onclick = () => addPinRow(pinRows, "", "");
-  if (pins && pins.length) {
-    for (const pin of pins) addPinRow(pinRows, pin.label, pin.signal);
-  } else {
-    addPinRow(pinRows, "1", "");
-    addPinRow(pinRows, "2", "");
-  }
-  connectorBlocksEl.appendChild(block);
-}
-
-// Reads a connector's pin rows back into a pins array, numbered in order.
-function collectPinsFromContainer(container) {
-  return [...container.querySelectorAll(".pin-row")].map((row, idx) => ({
-    id: String(idx + 1),
-    label: row.querySelector(".pin-label").value.trim() || String(idx + 1),
-    signal: row.querySelector(".pin-signal").value.trim(),
-  }));
-}
-
-function addPinRow(container, label, signal) {
-  const row = document.createElement("div");
-  row.className = "pin-row";
-  row.innerHTML = `
-    <input type="text" placeholder="Pin label" value="${escapeHtml(label || "")}" class="pin-label">
-    <input type="text" placeholder="Signal (optional)" value="${escapeHtml(signal || "")}" class="pin-signal">
-    <button type="button" class="pin-remove">✕</button>
-  `;
-  row.querySelector(".pin-remove").onclick = () => row.remove();
-  container.appendChild(row);
-}
-
-document.getElementById("btn-new-device").onclick = () => openDeviceModal(null);
-document.getElementById("btn-cancel-device").onclick = () => { deviceModal.classList.add("hidden"); editingDeviceId = null; };
-document.getElementById("btn-add-connector").onclick = () => addConnectorBlock("J0" + (connectorCounter + 1), "left");
-
-document.getElementById("btn-save-device").onclick = async () => {
-  const name = document.getElementById("dev-name").value.trim();
-  if (!name) { alert("Device needs a name."); return; }
-
-  const blocks = [...connectorBlocksEl.querySelectorAll(".connector-block")];
-  if (blocks.length === 0) { alert("Add at least one connector."); return; }
-
-  const connectors = blocks.map((block, cidx) => {
-    const id = block.querySelector(".conn-id").value.trim() || `J${cidx + 1}`;
-    const side = block.querySelector(".conn-side").value;
-    const pins = collectPinsFromContainer(block.querySelector(".conn-pin-rows"));
-    return { id, side, pins };
-  });
-
-  if (connectors.some(c => c.pins.length === 0)) { alert("Every connector needs at least one pin."); return; }
-
-  const device = {
-    name,
-    part_number: document.getElementById("dev-part").value.trim(),
-    color: document.getElementById("dev-color").value,
-    responsible_user_id: document.getElementById("dev-user").value || null,
-    origin: document.getElementById("dev-origin").value,
-    connectors,
-  };
-  if (editingDeviceId) device.id = editingDeviceId;
-
-  const res = await api("/api/devices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(device),
-  });
-  const saved = await res.json();
-  state.devices[saved.id] = saved;
-  deviceModal.classList.add("hidden");
-  const wasEditing = !!editingDeviceId;
-  editingDeviceId = null;
-  await loadDeviceLibrary();
-  if (wasEditing) {
-    render();
-    renderProps();
-    renderHarnessList();
-    renderDrawer();
-  }
-  setStatus(`Saved device "${saved.name}"`);
-};
 
 // ---------- Signal Rules modal (global signal-type compatibility) ----------
 
@@ -1876,6 +1974,7 @@ async function refreshProjectSelect() {
 function updateProjectVersionBadge() {
   const badge = document.getElementById("project-version-badge");
   const versionsBtn = document.getElementById("btn-project-versions");
+  const imagesBtn = document.getElementById("btn-project-images");
   if (state.project.id && state.project.version) {
     badge.textContent = `v${state.project.version}`;
     badge.classList.remove("hidden");
@@ -1883,6 +1982,12 @@ function updateProjectVersionBadge() {
   } else {
     badge.classList.add("hidden");
     versionsBtn.classList.add("hidden");
+  }
+  // Photos live on a page of their own, for saved projects.
+  if (imagesBtn) {
+    const template = document.getElementById("harness-app").dataset.imagesUrl || "";
+    imagesBtn.classList.toggle("hidden", !(state.project.id && template));
+    if (state.project.id) imagesBtn.href = template.replace("/0/", `/${state.project.id}/`);
   }
 }
 
@@ -1892,7 +1997,7 @@ document.getElementById("btn-new-project").onclick = () => {
   document.getElementById("project-select").value = "";
   updateProjectVersionBadge();
   selectNone();
-  render();
+  centerView();
   setStatus("New project");
 };
 
@@ -1926,13 +2031,13 @@ document.getElementById("project-select").onchange = async (e) => {
   document.getElementById("project-name").value = project.name;
   updateProjectVersionBadge();
   selectNone();
-  render();
+  centerView();
   setStatus(`Loaded "${project.name}"`);
 };
 
 document.getElementById("btn-project-versions").onclick = () => {
   if (!state.project.id) return;
-  openVersionsModal("project", state.project.id, state.project.version);
+  openVersionsModal(state.project.id, state.project.version);
 };
 
 document.getElementById("btn-delete-project").onclick = async () => {
@@ -1999,19 +2104,18 @@ document.getElementById("btn-save-users").onclick = async () => {
   setStatus("Users saved");
 };
 
-// ---------- Versions modal (shared by devices and projects) ----------
+// ---------- Versions modal (projects) ----------
+// Device versions live in the Devices module.
 
 const versionsModal = document.getElementById("versions-modal");
-let versionsModalState = null; // { kind: "device" | "project", id }
 
-async function openVersionsModal(kind, id, currentVersion) {
-  versionsModalState = { kind, id };
-  document.getElementById("versions-modal-title").textContent = kind === "device" ? "Device Versions" : "Project Versions";
+async function openVersionsModal(id, currentVersion) {
+  document.getElementById("versions-modal-title").textContent = "Project Versions";
   const listEl = document.getElementById("versions-list");
   listEl.innerHTML = "<p class=\"hint\">Loading…</p>";
   versionsModal.classList.remove("hidden");
 
-  const res = await api(`/api/${kind}s/${id}/versions`);
+  const res = await api(`/api/projects/${id}/versions`);
   const data = await res.json();
   const versions = (data.versions || []).slice().sort((a, b) => b - a);
 
@@ -2031,36 +2135,25 @@ async function openVersionsModal(kind, id, currentVersion) {
       row.appendChild(label);
       const activateBtn = document.createElement("button");
       activateBtn.textContent = "Make Current";
-      activateBtn.onclick = () => activateVersion(kind, id, v);
+      activateBtn.onclick = () => activateProjectVersion(id, v);
       row.appendChild(activateBtn);
     }
     listEl.appendChild(row);
   }
 }
 
-async function activateVersion(kind, id, version) {
-  const res = await api(`/api/${kind}s/${id}/versions/${version}/activate`, { method: "POST" });
+async function activateProjectVersion(id, version) {
+  const res = await api(`/api/projects/${id}/versions/${version}/activate`, { method: "POST" });
   if (!res.ok) { setStatus("Could not activate that version"); return; }
   const data = await res.json();
-
-  if (kind === "device") {
-    state.devices[id] = data;
-    await loadDeviceLibrary();
-    render();
-    renderProps();
-    renderHarnessList();
-    renderDrawer();
-  } else {
-    await ensureDevicesLoaded(data.instances.map(i => i.device_id));
-    state.project = data;
-    document.getElementById("project-name").value = data.name;
-    updateProjectVersionBadge();
-    selectNone();
-    render();
-  }
-
+  await ensureDevicesLoaded(data.instances.map(i => i.device_id));
+  state.project = data;
+  document.getElementById("project-name").value = data.name;
+  updateProjectVersionBadge();
+  selectNone();
+  centerView();
   versionsModal.classList.add("hidden");
-  setStatus(`${kind === "device" ? "Device" : "Project"} switched to v${version}`);
+  setStatus(`Project switched to v${version}`);
 }
 
 document.getElementById("btn-close-versions").onclick = () => versionsModal.classList.add("hidden");
@@ -2068,6 +2161,7 @@ document.getElementById("btn-close-versions").onclick = () => versionsModal.clas
 // ---------- Init ----------
 
 (async function init() {
+  resizeCanvas();
   await loadSignalRules();
   await loadUsers();
   await loadDeviceLibrary();

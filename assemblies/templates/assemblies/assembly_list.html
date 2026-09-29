@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% block content %}
 <div class="toolbar">
   <h1>Assemblies</h1>
@@ -22,7 +23,7 @@
   <tbody>
   {% for a in object_list %}
     <tr>
-      <td><a href="{{ a.get_absolute_url }}">{{ a.name }}</a></td>
+      <td>{% cover_thumb a 28 %} <a href="{{ a.get_absolute_url }}">{{ a.name }}</a></td>
       <td>{{ a.get_assembly_type_display }}</td>
       <td>{% include "assemblies/_status.html" %}</td>
       <td>{{ a.version }}</td>

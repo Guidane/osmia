@@ -18,7 +18,7 @@ class AssemblyListView(LoginRequiredMixin, ListView):
     model = Assembly
 
     def get_queryset(self):
-        qs = Assembly.objects.annotate(component_count=Count('components'))
+        qs = Assembly.objects.prefetch_related('images').annotate(component_count=Count('components'))
         g = self.request.GET
         if g.get('q'):
             qs = qs.filter(Q(name__icontains=g['q']) | Q(version__icontains=g['q']))

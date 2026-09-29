@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% block content %}
 {% with a=assembly %}
 <div class="toolbar">
@@ -68,6 +69,7 @@
   </div>
 
   <div>
+    {% image_gallery a %}
     <section class="card">
       <dl class="props">
         <dt>Type</dt><dd>{{ a.get_assembly_type_display }}</dd>

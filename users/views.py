@@ -1,14 +1,16 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from core import hooks
 from core.trees import sorted_by_path
 
-from .forms import DepartmentForm, ProfileForm, UserCreateForm, UserEditForm
-from .models import Department, User
+from departments.models import Department
+
+from .forms import ProfileForm, UserCreateForm, UserEditForm
+from .models import User
 
 
 class UserListView(LoginRequiredMixin, ListView):
@@ -19,7 +21,7 @@ class UserListView(LoginRequiredMixin, ListView):
         return super().get_context_data(**kwargs, departments=sorted_by_path(Department.objects.select_related('parent')))
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related('department__parent')
+        qs = super().get_queryset().select_related('department__parent').prefetch_related('images')
         q = self.request.GET.get('q', '').strip()
         if q:
             qs = qs.filter(
@@ -77,49 +79,3 @@ class UserUpdateView(LoginRequiredMixin, UpdateView):
     def form_valid(self, form):
         messages.success(self.request, 'Saved.')
         return super().form_valid(form)
-
-
-# -- Departments (nested) ------------------------------------------------------
-
-class DepartmentListView(LoginRequiredMixin, ListView):
-    model = Department
-    template_name = 'users/department_list.html'  # the queryset becomes a sorted list
-
-    def get_queryset(self):
-        return sorted_by_path(
-            Department.objects.select_related('parent').annotate(member_count=Count('users', distinct=True))
-        )
-
-
-class DepartmentDetailView(LoginRequiredMixin, DetailView):
-    model = Department
-
-    def get_context_data(self, **kwargs):
-        d = self.object
-        return super().get_context_data(
-            **kwargs,
-            members=d.members(include_sub=True).select_related('department__parent'),
-            children=sorted_by_path(d.children.all()),
-            panels=hooks.collect('department_detail_panels', self.request, d),
-        )
-
-
-class DepartmentCreateView(LoginRequiredMixin, PermissionRequiredMixin, CreateView):
-    model = Department
-    form_class = DepartmentForm
-    permission_required = 'users.add_department'
-    template_name = 'core/form.html'
-    extra_context = {'heading': 'New department'}
-
-    def get_initial(self):
-        return {'parent': self.request.GET.get('parent')}
-
-
-class DepartmentUpdateView(LoginRequiredMixin, PermissionRequiredMixin, UpdateView):
-    model = Department
-    form_class = DepartmentForm
-    permission_required = 'users.change_department'
-    template_name = 'core/form.html'
-
-    def get_context_data(self, **kwargs):
-        return super().get_context_data(**kwargs, heading=f'Edit {self.object}', cancel_url=self.object.get_absolute_url())

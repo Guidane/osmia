@@ -1,7 +1,7 @@
 from django import forms
 
 from core.trees import TreeNodeForm
-from users.models import Department
+from departments.models import Department
 
 from .models import Budget
 

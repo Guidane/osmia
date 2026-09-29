@@ -1,27 +1,16 @@
 from django.contrib.auth.models import AbstractUser
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from django.urls import reverse
-
-from core.trees import TreeNode
-
-
-class Department(TreeNode):
-    """An organisational unit, nested, e.g. ``Operations > Warehouse``."""
-
-    def get_absolute_url(self):
-        return reverse('users:department_detail', args=[self.pk])
-
-    def members(self, include_sub=False):
-        ids = {self.pk, *self.descendant_ids()} if include_sub else {self.pk}
-        return User.objects.filter(department_id__in=ids)
 
 
 class User(AbstractUser):
     job_title = models.CharField(max_length=100, blank=True)
     department = models.ForeignKey(
-        Department, null=True, blank=True, on_delete=models.SET_NULL, related_name='users',
+        'departments.Department', null=True, blank=True, on_delete=models.SET_NULL, related_name='users',
     )
     phone = models.CharField(max_length=30, blank=True)
+    images = GenericRelation('core.Image')  # pictures, shown with {% image_gallery %}
 
     class Meta:
         ordering = ['first_name', 'last_name', 'username']
@@ -31,3 +20,7 @@ class User(AbstractUser):
 
     def get_absolute_url(self):
         return reverse('users:detail', args=[self.pk])
+
+    def images_editable_by(self, user):
+        """Your photos are yours to change, and managers'."""
+        return user == self or user.has_perm('users.change_user')

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% comment %}Shared list page for nested categories and locations.{% endcomment %}
 {% block content %}
 <div class="toolbar">
@@ -12,7 +13,7 @@
     <tr>
       <td>
         {% for a in node.ancestors %}{% if not forloop.last %}<span class="muted">{{ a.name }} › </span>{% endif %}{% endfor %}
-        <a href="{{ node.get_absolute_url }}">{{ node.name }}</a>
+        {% if show_images %}{% cover_thumb node 28 %} {% endif %}<a href="{{ node.get_absolute_url }}">{{ node.name }}</a>
       </td>
       {% if show_attributes %}<td class="num">{{ node.attribute_count }}</td>{% endif %}
       <td class="num"><a href="{% url 'inventory:part_list' %}?{{ filter_param }}={{ node.pk }}">{{ node.part_count }}</a></td>

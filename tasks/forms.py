@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth import get_user_model
 
-from users.models import Department
+from departments.models import Department
 
 from .models import Task
 

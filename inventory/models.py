@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models, transaction
 from django.db.models import F
 from django.urls import reverse
@@ -34,13 +35,16 @@ class Attribute(models.Model):
 
 
 class Location(TreeNode):
+    images = GenericRelation('core.Image')  # e.g. photos of the shelf or bin
+
     def get_absolute_url(self):
-        return reverse('inventory:location_edit', args=[self.pk])
+        return reverse('inventory:location_detail', args=[self.pk])
 
 
 class Part(models.Model):
     part_number = models.CharField(max_length=50, unique=True)
     name = models.CharField('Description', max_length=200, blank=True)
+    images = GenericRelation('core.Image')  # pictures, shown with {% image_gallery %}
     category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL, related_name='parts')
     location = models.ForeignKey(Location, null=True, blank=True, on_delete=models.SET_NULL, related_name='parts')
     unit = models.CharField(max_length=20, default='pcs')
@@ -115,7 +119,12 @@ class StockMove(models.Model):
         fields.setdefault('unit_cost', part.cost)
         move = cls.objects.create(part=part, move_type=move_type, delta=Decimal(delta), **fields)
         Part.objects.filter(pk=part.pk).update(quantity_on_hand=F('quantity_on_hand') + move.delta)
+        was_low = part.is_low_stock
         part.refresh_from_db(fields=['quantity_on_hand'])
+        if part.is_low_stock and not was_low:
+            # Automations: "A part runs low on stock"
+            from core import automation
+            automation.emit('inventory.stock_low', part)
         return move
 
     @classmethod

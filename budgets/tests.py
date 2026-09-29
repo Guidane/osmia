@@ -7,7 +7,8 @@ from django.urls import reverse
 
 from inventory.models import Part, StockMove
 from tasks.models import Task
-from users.models import Department, User
+from departments.models import Department
+from users.models import User
 
 from .models import Budget, Spending, TaskBudget
 
@@ -70,8 +71,8 @@ class BudgetTests(DemoDataTestCase):
             reverse('budgets:create'), reverse('budgets:create') + f'?parent={fs.pk}',
             fs.get_absolute_url(), reverse('budgets:edit', args=[fs.pk]),
             self.budgets['B-2026'].get_absolute_url(),
-            reverse('users:department_list'), reverse('users:department_create'),
-            dept.get_absolute_url(), reverse('users:department_edit', args=[dept.pk]),
+            reverse('departments:list'), reverse('departments:create'),
+            dept.get_absolute_url(), reverse('departments:edit', args=[dept.pk]),
             reverse('users:list') + f'?department={dept.parent_id}',
         ]:
             with self.subTest(url=url):

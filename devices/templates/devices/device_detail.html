@@ -1,53 +1,74 @@
 {% extends "base.html" %}
+{% load osmia_images %}
 {% block content %}
 {% with d=device %}
 <div class="toolbar">
   <h1><span class="swatch" style="background: {{ d.color }}"></span> {{ d.name }}
     {% if d.part_number %}<span class="muted">· {{ d.part_number }}</span>{% endif %}
     <span class="badge">v{{ d.version }}</span></h1>
-  <a class="btn primary" href="{% url 'devices:connector_create' d.pk %}">Add connector</a>
-  <a class="btn" href="{% url 'devices:edit' d.pk %}">Edit</a>
+  <a class="btn" href="{% url 'devices:edit' d.pk %}">Edit device</a>
 </div>
 
-<div class="grid-2">
-  <div>
-    <section class="card panel">
-      <h2>Connectors</h2>
-      {% include "devices/_connector_table.html" with editable=True %}
-    </section>
+<div class="device-layout">
+  <aside class="device-sidebar card">
+    <a class="side-link{% if not selected %} active{% endif %}" href="{{ d.get_absolute_url }}">ℹ Device details</a>
 
+    <h2>Connectors</h2>
     {% for c in connectors %}
+      <a class="side-link{% if c == selected %} active{% endif %}" href="{{ d.get_absolute_url }}?connector={{ c.pk }}">
+        <strong>{{ c.designator }}</strong>
+        <small class="muted">{{ c.description|default:"" }}{% if c.description %} · {% endif %}{{ c.pins.all|length }} pin{{ c.pins.all|length|pluralize }}</small>
+      </a>
+    {% empty %}
+      <p class="muted">No connectors yet.</p>
+    {% endfor %}
+    <a class="btn small primary side-add" href="{% url 'devices:connector_create' d.pk %}">+ Add connector</a>
+  </aside>
+
+  <div class="device-main">
+  {% if selected %}
+    {% with c=selected %}
     <section class="card panel">
-      <h2>{{ c.designator }} pinout {% if c.description %}<span class="muted">· {{ c.description }}</span>{% endif %}</h2>
-      <table class="list compact">
+      <div class="toolbar">
+        <h2>{{ c.designator }}{% if c.description %} <span class="muted">· {{ c.description }}</span>{% endif %}</h2>
+        <a class="btn primary" href="{% url 'devices:connector_edit' d.pk c.pk %}">Edit pins</a>
+      </div>
+      <dl class="props connector-props">
+        <dt>Connector part</dt>
+        <dd>{% if c.part %}<a href="{{ c.part.get_absolute_url }}">{{ c.part.part_number }}</a>{% if c.part.name %} <span class="muted">{{ c.part.name }}</span>{% endif %}{% else %}<span class="muted">not set</span>{% endif %}</dd>
+        <dt>Harness plug</dt><dd>{{ c.mating_designator }}</dd>
+        <dt>Side in designer</dt><dd>{{ c.get_side_display }}</dd>
+      </dl>
+      <table class="list">
         <thead><tr><th class="num">#</th><th>Pin</th><th>Signal</th></tr></thead>
         <tbody>
         {% for p in c.pins.all %}
           <tr><td class="num muted">{{ p.position }}</td><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td></tr>
         {% empty %}
-          <tr><td colspan="3" class="muted">No pins.</td></tr>
+          <tr><td colspan="3" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>
         {% endfor %}
         </tbody>
       </table>
     </section>
-    {% endfor %}
-
-    {# Panels contributed by other modules, e.g. harness projects using this device #}
-    {% include "core/panels.html" %}
-  </div>
-
-  <div>
-    <section class="card">
+    {% endwith %}
+  {% else %}
+    <section class="card panel">
+      <h2>Device details</h2>
       <dl class="props">
+        <dt>Part number</dt><dd>{{ d.part_number|default:"—" }}</dd>
         <dt>Made by</dt><dd>{{ d.get_origin_display }}{% if d.manufacturer %} · {{ d.manufacturer }}{% endif %}</dd>
         <dt>Role</dt><dd>{{ d.get_role_display }}</dd>
+        <dt>Owner</dt><dd>{% if d.responsible %}<a href="{{ d.responsible.get_absolute_url }}">{{ d.responsible }}</a>{% else %}—{% endif %}</dd>
         {% if d.assembly %}<dt>Assembly</dt><dd><a href="{{ d.assembly.get_absolute_url }}">{{ d.assembly }}</a> <span class="muted">rev {{ d.assembly.revision }}</span></dd>{% endif %}
         {% if d.model_number %}<dt>Model</dt><dd>{{ d.model_number }}</dd>{% endif %}
         {% if d.asset_tag %}<dt>Asset tag</dt><dd>{{ d.asset_tag }}</dd>{% endif %}
-        <dt>Owner</dt><dd>{% if d.responsible %}<a href="{{ d.responsible.get_absolute_url }}">{{ d.responsible }}</a>{% else %}—{% endif %}</dd>
+        <dt>Colour</dt><dd><span class="swatch" style="background: {{ d.color }}"></span> {{ d.color }}</dd>
+        <dt>Connectors</dt><dd>{{ connectors|length }}</dd>
       </dl>
-      {% if d.notes %}<hr>{{ d.notes|linebreaks }}{% endif %}
+      {% if d.notes %}<h3>Notes</h3>{{ d.notes|linebreaks }}{% endif %}
     </section>
+
+    {% image_gallery d %}
 
     <section class="card panel">
       <h2>Versions</h2>
@@ -62,6 +83,10 @@
         <p class="muted">No versions yet.</p>
       {% endfor %}
     </section>
+
+    {# Panels contributed by other modules, e.g. harness projects using this device #}
+    {% include "core/panels.html" %}
+  {% endif %}
   </div>
 </div>
 {% endwith %}
