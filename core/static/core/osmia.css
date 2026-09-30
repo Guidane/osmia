@@ -335,3 +335,7 @@ select.tag-select { max-width: 9em; }
   .module-switcher { order: 10; width: 100%; }
   .module-switcher a { font-size: 16px; }
 }
+button.sort-head { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-transform: inherit; letter-spacing: inherit; }
+button.sort-head:hover { color: var(--brand); }
+button.sort-head.sorted::after { content: " ▲"; font-size: 10px; }
+button.sort-head.sorted.desc::after { content: " ▼"; }

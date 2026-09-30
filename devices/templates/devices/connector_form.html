@@ -11,14 +11,25 @@
 
     <fieldset>
       <legend>Pins</legend>
-      <p class="muted">Pins keep the order shown. Blank new rows are ignored. Pins with the same set number are one cable set
+      <p class="muted">Click a column header to sort the list (again to reverse, a third time for pin order); sorting only changes
+        how the list is shown, saving keeps the pins' order. Blank new rows are ignored. Pins with the same set number are one cable set
         (e.g. a twisted pair). Signals come from <a href="{% url 'devices:signals' %}" target="_blank">Devices › Signals</a>;
         each tag column has its own list (<a href="{% url 'devices:tags' %}" target="_blank">Devices › Tags</a>), and
         "+ Add new…" adds to it.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
       <table class="list compact">
-        <thead><tr><th>Pin</th><th>Signal</th><th>Tag 1</th><th>Tag 2</th><th>Tag 3</th><th>Tag 4</th><th>Set</th><th>Set type</th><th></th></tr></thead>
+        <thead id="pin-sort"><tr>
+          <th><button type="button" class="sort-head" data-col="0">Pin</button></th>
+          <th><button type="button" class="sort-head" data-col="1">Signal</button></th>
+          <th><button type="button" class="sort-head" data-col="2">Tag 1</button></th>
+          <th><button type="button" class="sort-head" data-col="3">Tag 2</button></th>
+          <th><button type="button" class="sort-head" data-col="4">Tag 3</button></th>
+          <th><button type="button" class="sort-head" data-col="5">Tag 4</button></th>
+          <th><button type="button" class="sort-head" data-col="6">Set</button></th>
+          <th><button type="button" class="sort-head" data-col="7">Set type</button></th>
+          <th></th>
+        </tr></thead>
         <tbody id="pin-rows">
         {% for f in formset %}
           <tr class="pin-row">
@@ -92,6 +103,51 @@
       select.value = existing ? existing.value : name;
       previous.set(select, select.value);
     });
+  })();
+
+  // Sorting the list by a column (view only: saving keeps the pins' order,
+  // which follows each row's form number, not where it's shown).
+  (function () {
+    const rows = document.getElementById('pin-rows');
+    const heads = [...document.querySelectorAll('#pin-sort .sort-head')];
+    let state = { col: null, desc: false };
+    const valueOf = (tr, col) => {
+      const cell = tr.children[col];
+      const field = cell && cell.querySelector('input:not([type=hidden]), select');
+      if (!field) return '';
+      return field.tagName === 'SELECT' ? (field.value && field.value !== '__new__' ? field.selectedOptions[0].textContent.trim() : '') : field.value.trim();
+    };
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    function apply() {
+      const all = [...rows.children];
+      // Rows added since (with "+ Add pin") come after the others in pin order.
+      let next = Math.max(-1, ...all.map(tr => Number(tr.dataset.order ?? -1))) + 1;
+      all.forEach(tr => { if (tr.dataset.order === undefined) tr.dataset.order = next++; });
+      const byOrder = (a, b) => Number(a.dataset.order) - Number(b.dataset.order);
+      let sorted;
+      if (state.col === null) {
+        sorted = all.sort(byOrder);
+      } else {
+        const filled = all.filter(tr => valueOf(tr, state.col) !== '');
+        const empty = all.filter(tr => valueOf(tr, state.col) === '').sort(byOrder);
+        filled.sort((a, b) => collator.compare(valueOf(a, state.col), valueOf(b, state.col)) * (state.desc ? -1 : 1) || byOrder(a, b));
+        sorted = [...filled, ...empty];  // pins without a value last
+      }
+      sorted.forEach(tr => rows.appendChild(tr));
+      heads.forEach(h => {
+        const on = state.col === Number(h.dataset.col);
+        h.classList.toggle('sorted', on);
+        h.classList.toggle('desc', on && state.desc);
+      });
+    }
+    heads.forEach(h => h.addEventListener('click', () => {
+      const col = Number(h.dataset.col);
+      if (state.col !== col) state = { col, desc: false };
+      else if (!state.desc) state.desc = true;
+      else state = { col: null, desc: false };
+      apply();
+    }));
+    [...rows.children].forEach((tr, i) => { tr.dataset.order = i; });  // pin order as loaded
   })();
 
   // "+ Add pin": a new blank row from the formset's empty form.

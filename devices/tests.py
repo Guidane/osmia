@@ -187,6 +187,7 @@ class PinDetailsTests(DeviceTestCase):
             self.assertContains(page, f'name="pins-0-tag{column}"')
             self.assertContains(page, f'data-column="{column}"')
         self.assertContains(page, '+ Add new…')
+        self.assertContains(page, 'class="sort-head" data-col="2">Tag 1</button>')  # the editor sorts too
         self.assertContains(page, '<option value="CAN1_H" selected>CAN1_H</option>')  # from the Tag 1 list
         # A value typed with "+ Add new…" is saved and joins its column's list; repeats are fine.
         resp = self.client.post(url, connector_post(j02, [
