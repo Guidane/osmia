@@ -16,6 +16,17 @@ class CategoryForm(TreeNodeForm):
 class LocationForm(TreeNodeForm):
     class Meta(TreeNodeForm.Meta):
         model = Location
+        fields = ['name', 'label', 'parent']
+
+    def clean(self):
+        data = super().clean()
+        label = (data.get('label') or '').strip()
+        data['label'] = label
+        if label:
+            clash = Location.objects.filter(parent=data.get('parent'), label__iexact=label).exclude(pk=self.instance.pk).first()
+            if clash:
+                self.add_error('label', f'"{clash.name}" in the same place already has the label {clash.label}.')
+        return data
 
 
 AttributeFormSet = forms.inlineformset_factory(
@@ -84,7 +95,8 @@ class PartForm(forms.ModelForm):
 
 class StockMoveForm(forms.Form):
     part = forms.ModelChoiceField(Part.objects.filter(is_active=True))
-    move_type = forms.ChoiceField(label='Type', choices=StockMove.Type.choices)
+    # Transfers are made by selecting rows and picking a location, not here.
+    move_type = forms.ChoiceField(label='Type', choices=[c for c in StockMove.Type.choices if c[0] != StockMove.Type.TRANSFER])
     quantity = forms.DecimalField(
         min_value=Decimal('0'), decimal_places=2,
         help_text='For receipts and issues, the amount moved. For adjustments, the counted quantity on hand.',

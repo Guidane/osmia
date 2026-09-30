@@ -60,11 +60,20 @@ dependency is missing, startup stops with a clear error.
 - **Orders** (`orders`, depends on users, inventory and budgets): purchase orders (PO-0001, ...) from a supplier, charged to a budget, with lines of parts, quantities and unit prices. An order goes draft → placed → received (or cancelled); only drafts can be edited, and an order needs lines to be placed. Placed and received orders count as spending on their budget. **Receiving** an order books every line into stock once, at the order's price.
 - **Automations** (`automations`, depends on users): rules that do things by themselves. A rule is **When** (a trigger, e.g. "An order is placed") → **If** (optional conditions on the record, e.g. total is more than 500) → **Then** (steps, run in order). Steps are **Create tasks**, **Change a status** (of an order, task or assembly), **Notify people** (in-app, shown by the 🔔 in the top bar) and **Issue / receive stock**. Tasks a rule creates form a group, and **"All tasks created by a rule are done"** triggers a next rule, with `{source}` still pointing at the record the chain started from. The demo chains two rules this way: placing an order creates the check-in tasks, and finishing them receives the order into stock. If any step fails, the rule's other steps are undone (the change that triggered it stays), and the **Run log** shows what every rule did or why it failed. Rules can trigger rules at most 5 deep.
 
+### Stock locations and codes
+
+A location has a name ("Shelf A") and an optional short **label** ("A"). Its **code** joins the labels down the tree, so Rack row **A** › Rack **1** › Shelf **A** is **A1A**. Codes show next to locations everywhere, and the part search finds parts by their location's code. Labels are unique within the same parent.
+
+**Generate locations** (on the Locations list, or **Generate sub-locations** on a location's page) builds a whole block at once. List the levels from the top down, each with a name, how many, the label style (A, B, C / a, b, c / 1, 2, 3 / 01, 02, 03) and an optional start (e.g. start racks at 7). The page previews the count and the codes before anything is made. 4 rack rows × 6 racks × 4 shelves gives 124 locations, A1A to D6D. Locations that already exist (same place, same label) are kept, so running it again with more racks only adds the new ones.
+
+**Delete** on a location's page removes it together with its sub-locations, but only while no parts are kept in any of them. Otherwise it lists the parts to move first. Locations and categories are shown as a tree: ▸/▾ opens a level (what you leave open is remembered), **Expand all / Collapse all**, and the filter box (a name or a code like `B10`) shows the matches with the levels above them. Siblings sort naturally, so Rack 2 comes before Rack 10. **Moving stock to another location:** on **Stock moves**, click rows (or tick them; all rows of a part go together), pick a location in the bar above the table and press **Move**. A location's page does the same for the parts stored there, and a part's page has a **Move to…** box. A part keeps its whole stock in one location, so a move takes all of it. Each move is logged as a **Transfer** (from → to) in the stock history. The Locations table can delete empty locations too (✕ on each row), and its **Parts** and **Quantity** (total on hand) columns include sub-locations.
+
 ### Images
 
 Parts, stock locations, assemblies, tasks, devices, harness projects and users can have images (e.g. a photo of a shelf or bin, so people can find it). Each location has its own page, showing the parts stored there, its sub-locations and its images. Add them with **+ Add images** on the record's page, or drop image files onto its Images card. Click a thumbnail to open it large. From there you can page through the images (← →), add a caption, **Make cover** or remove it. The first image is the record's cover, shown next to its name in lists (a user's first photo is their profile picture). Harness projects keep theirs on a page of their own, opened with **🖼 Images ↗** in the designer or from the project list.
 
 Uploads are turned upright, scaled down to at most 2000 px, and re-encoded, which drops their metadata (camera, GPS position, ...). Each file can be up to 20 MB, as JPEG, PNG, GIF, WebP, BMP or TIFF. Files are stored under `media/` (or `OSMIA_MEDIA_ROOT`) and are served by Osmia to logged-in users only. Anyone logged in can add images to a record, except that only you and user managers can change your photos. To give another model images, add `images = GenericRelation('core.Image')` to it and put `{% load osmia_images %}{% image_gallery record %}` on its page.
+- **Audit** (`audit`, depends on users): the change log of every module. Every create, change and delete of a module's records is logged automatically, with who made it and each field's old → new value (passwords only as "(changed)"). Child rows such as an order's lines or a device's pins are logged on their parent. Each module's menu has a **Log** link to its own log, and detail pages show a **History** panel. When one module's code changes another module's records, the entry gets a **⛓ chain tag** naming that module, the path it came through (e.g. tasks → automations → orders) and a **chain id**. Everything done in one go shares that id, and **Chains** lists every chain that crossed modules, with a trace page for each. **Activity** shows who changed how much.
 
 ### Looking parts up online
 
@@ -115,3 +124,16 @@ def stock_move(ctx, params):                        # ctx: object, source, rule
 ```
 
 The rule builder offers every registered trigger and action, with a form for each action's parameters.
+
+### Logging across modules
+
+`core/audit.py` logs changes from model signals, so modules don't need to do anything; the Audit module stores the entries. A web request acts as the module whose page it is. Code that works on behalf of another module says so, and changes it makes in other modules get that module's chain tag:
+
+```python
+from core import audit
+
+with audit.acting('automations', source='rule "Check in placed orders"'):
+    ...
+```
+
+A model can opt out with `audit_log = False`, leave fields out with `audit_ignore = ('field',)`, and log its rows on a parent with `audit_record()`.

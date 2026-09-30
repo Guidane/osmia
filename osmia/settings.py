@@ -66,6 +66,7 @@ OSMIA_MODULES = [
     'harness',
     'orders',
     'automations',
+    'audit',
 ]
 
 INSTALLED_APPS += OSMIA_MODULES
@@ -77,6 +78,8 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    # Change log: each request is one chain, acting as the module whose page it is.
+    'core.audit.AuditMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 

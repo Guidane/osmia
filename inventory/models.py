@@ -35,10 +35,51 @@ class Attribute(models.Model):
 
 
 class Location(TreeNode):
+    """A place parts are kept, e.g. Warehouse > Rack row A > Rack 1 > Shelf A.
+
+    Its ``code`` joins the labels down the tree (A + 1 + A = "A1A"), which is
+    what goes on the shelf. ``path`` and ``code`` are stored so long lists of
+    locations don't have to walk up the tree for every row.
+    """
+    label = models.CharField(max_length=20, blank=True,
+                             help_text="Short code, e.g. A or 1. A location's code joins the labels down the tree: "
+                                       'rack row A, rack 1, shelf A is A1A.')
+    code = models.CharField(max_length=200, blank=True, editable=False, db_index=True)
+    path = models.CharField(max_length=500, blank=True, editable=False)
     images = GenericRelation('core.Image')  # e.g. photos of the shelf or bin
+    audit_ignore = ('path',)  # follows the names; logging it would repeat every rename
+
+    class Meta(TreeNode.Meta):
+        constraints = [models.UniqueConstraint(fields=['parent', 'label'], condition=~models.Q(label=''),
+                                               name='unique_location_label_per_parent')]
+
+    def __str__(self):
+        path = self.full_path()
+        return f'{path} ({self.code})' if self.code else path
+
+    def full_path(self, sep=' > '):
+        if self.path and sep == ' > ':
+            return self.path
+        return super().full_path(sep)
 
     def get_absolute_url(self):
         return reverse('inventory:location_detail', args=[self.pk])
+
+    def refresh_path(self):
+        parent = self.parent
+        self.path = f'{parent.full_path()} > {self.name}' if parent else self.name
+        self.code = (parent.code if parent else '') + self.label
+
+    def save(self, *args, **kwargs):
+        old = (self.path, self.code)
+        self.refresh_path()
+        if kwargs.get('update_fields') is not None:
+            kwargs['update_fields'] = {*kwargs['update_fields'], 'path', 'code'}
+        super().save(*args, **kwargs)
+        if old != (self.path, self.code):
+            for child in self.children.all():
+                child.parent = self  # the saved one, so the child sees the new path
+                child.save()
 
 
 class Part(models.Model):
@@ -91,6 +132,7 @@ class StockMove(models.Model):
         IN = 'in', 'Receipt'
         OUT = 'out', 'Issue'
         ADJUST = 'adjust', 'Adjustment'
+        TRANSFER = 'transfer', 'Transfer'  # moved to another location; quantity unchanged
 
     part = models.ForeignKey(Part, on_delete=models.PROTECT, related_name='moves')
     move_type = models.CharField('Type', max_length=10, choices=Type)
@@ -99,6 +141,9 @@ class StockMove(models.Model):
     # rewrite what a task or budget has already spent.
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0, editable=False)
     note = models.CharField(max_length=255, blank=True)
+    # Transfers: where the part's stock was moved from and to.
+    from_location = models.ForeignKey(Location, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    to_location = models.ForeignKey(Location, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     # Integration with the Tasks module: materials consumed by a task.
     task = models.ForeignKey(
         'tasks.Task', null=True, blank=True, on_delete=models.SET_NULL, related_name='stock_moves',
@@ -125,6 +170,19 @@ class StockMove(models.Model):
             # Automations: "A part runs low on stock"
             from core import automation
             automation.emit('inventory.stock_low', part)
+        return move
+
+    @classmethod
+    @transaction.atomic
+    def transfer(cls, part, location, user=None, note=''):
+        """Move all of a part's stock to ``location``, and log it. Returns the
+        move, or None if the part is already there."""
+        if part.location_id == getattr(location, 'pk', None):
+            return None
+        move = cls.objects.create(part=part, move_type=cls.Type.TRANSFER, delta=0, unit_cost=part.cost,
+                                  from_location=part.location, to_location=location, user=user, note=note)
+        part.location = location
+        part.save(update_fields=['location'])
         return move
 
     @classmethod

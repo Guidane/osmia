@@ -32,7 +32,7 @@
       <td>{% cover_thumb p 28 %} <a href="{{ p.get_absolute_url }}">{{ p.part_number }}</a></td>
       <td>{{ p.name }} {% if not p.is_active %}<span class="badge off">Archived</span>{% endif %}</td>
       <td>{{ p.category|default:"—" }}</td>
-      <td>{{ p.location|default:"—" }}</td>
+      <td>{% if p.location %}{% if p.location.code %}<code>{{ p.location.code }}</code> {% endif %}<span class="{% if p.location.code %}muted{% endif %}">{{ p.location.full_path }}</span>{% else %}—{% endif %}</td>
       <td class="num">{{ p.quantity_on_hand|floatformat:"-2" }} {{ p.unit }}</td>
       <td class="num">{{ p.reorder_level|floatformat:"-2" }}</td>
       <td class="num">{{ p.stock_value|floatformat:2 }}</td>

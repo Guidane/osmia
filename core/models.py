@@ -33,6 +33,9 @@ class Image(models.Model):
     def __str__(self):
         return self.caption or f'Image {self.pk}'
 
+    def audit_record(self):
+        return self.record  # logged in the module of the part, task, ... it belongs to
+
     @property
     def url(self):
         return reverse('core:image', args=[self.pk])

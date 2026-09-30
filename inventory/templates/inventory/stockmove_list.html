@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load osmia_static %}
 {% block content %}
 <div class="toolbar">
   <h1>Stock moves</h1>
@@ -12,5 +13,7 @@
   </form>
   <a class="btn primary" href="{% url 'inventory:move_create' %}">New move</a>
 </div>
-{% include "inventory/_moves_table.html" with moves=object_list %}
+{% include "inventory/_move_bar.html" %}
+{% include "inventory/_moves_table.html" with moves=object_list selectable=True %}
+<script src="{% versioned_static 'core/select_rows.js' %}"></script>
 {% endblock %}

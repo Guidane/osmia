@@ -268,3 +268,54 @@ tr.pin-removed input { pointer-events: none; }
 .lightbox-caption-text:empty { display: none; }
 img.thumb { display: inline-block; border-radius: 4px; object-fit: cover; vertical-align: middle; background: #eceff3; }
 img.avatar { display: inline-block; border-radius: 50%; object-fit: cover; vertical-align: middle; background: #eceff3; }
+
+/* Inventory: location codes and the location generator */
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; background: #f1f3f6; border-radius: 4px; padding: 1px 5px; }
+h1 code.loc-code { font-size: 16px; vertical-align: middle; }
+.loc-gen { max-width: 820px; }
+.gen-levels { margin: 8px 0; }
+.gen-levels td { vertical-align: middle; }
+.gen-levels input.count { width: 80px; }
+.gen-levels input.start { width: 70px; }
+.gen-levels .level-no { width: 1%; }
+.gen-preview { background: #fafbfc; margin-top: 16px; }
+.gen-preview h2 { margin-top: 0; }
+#gen-codes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.error-text { color: var(--danger); }
+td.row-actions { width: 1%; white-space: nowrap; }
+td.row-actions form { margin: 0; }
+.btn.remove { color: var(--danger); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Tree tables (categories, locations) */
+.tree-filter { width: 180px; }
+.tree-name { white-space: nowrap; }
+.tree-indent { display: inline-block; }
+.tree-toggle { display: inline-block; width: 20px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 12px; }
+.tree-toggle[hidden] { display: inline-block; visibility: hidden; }
+.tree-toggle:hover { color: var(--brand); }
+.tree-table tr[data-depth="0"] .tree-name > a { font-weight: 600; }
+
+/* Selecting rows and moving parts to another location */
+.move-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; }
+.move-bar select { max-width: 360px; }
+.move-count { margin-right: auto; }
+table[data-select] tbody tr { cursor: pointer; }
+table[data-select] tbody tr.selected td { background: #f3ecf1; }
+.select-cell { width: 1%; }
+.move-inline { display: flex; gap: 6px; margin: 4px 0 0; }
+.move-inline select { max-width: 220px; font-size: 12px; }
+
+/* Audit: the change log and chain tags */
+.log-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.log-filters .check { display: inline-flex; gap: 4px; align-items: center; }
+.log-table td { vertical-align: top; }
+.log-table .changes { font-size: 13px; }
+.log-table .changes .field { color: var(--muted); }
+.log-table .changes .old { text-decoration: line-through; color: var(--muted); }
+.log-table tr.chained td { background: #fbf8fb; }
+.nowrap { white-space: nowrap; }
+.chain-tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #f3ecf1; color: var(--brand); font-size: 12px; white-space: nowrap; }
+.chain-id { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+.history-link { font-size: 12px; margin-left: 4px; }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin: 12px 0; }

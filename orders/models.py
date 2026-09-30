@@ -75,10 +75,12 @@ class Order(models.Model):
         if value == self.Status.PLACED:
             self.placed_at = timezone.now()
         if value == self.Status.RECEIVED:
+            from core import audit
             from inventory.models import StockMove
-            for line in self.lines.select_related('part'):
-                StockMove.record(line.part, StockMove.Type.IN, line.quantity, unit_cost=line.unit_price,
-                                 user=user, note=f'Received with {self.number}')
+            with audit.acting('orders', source=f'received {self.number}'):
+                for line in self.lines.select_related('part'):
+                    StockMove.record(line.part, StockMove.Type.IN, line.quantity, unit_cost=line.unit_price,
+                                     user=user, note=f'Received with {self.number}')
             self.received_at = timezone.now()
         self.status = value
         self.save()
@@ -94,7 +96,7 @@ class OrderLine(models.Model):
         ordering = ['id']
 
     def __str__(self):
-        return f'{self.quantity.normalize():f} × {self.part}'
+        return f'{Decimal(str(self.quantity)).normalize():f} × {self.part}'
 
     @property
     def line_total(self):

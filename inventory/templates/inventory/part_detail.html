@@ -25,7 +25,16 @@
     <section class="card">
       <dl class="props">
         <dt>Category</dt><dd>{{ part.category|default:"—" }}</dd>
-        <dt>Location</dt><dd>{{ part.location|default:"—" }}</dd>
+        <dt>Location</dt><dd>{% if part.location %}<a href="{{ part.location.get_absolute_url }}">{{ part.location.full_path }}</a>{% if part.location.code %} <code>{{ part.location.code }}</code>{% endif %}{% else %}—{% endif %}
+          <form method="post" action="{% url 'inventory:transfer' %}" class="move-inline">
+            {% csrf_token %}<input type="hidden" name="parts" value="{{ part.pk }}"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <select name="location" required aria-label="Move to">
+              <option value="">Move to…</option>
+              {% for loc in move_locations %}{% if loc.pk != part.location_id %}<option value="{{ loc.pk }}">{% if loc.code %}{{ loc.code }} · {% endif %}{{ loc.full_path }}</option>{% endif %}{% endfor %}
+            </select>
+            <button class="btn small">Move</button>
+          </form>
+        </dd>
         <dt>On hand</dt><dd><strong>{{ part.quantity_on_hand|floatformat:"-2" }} {{ part.unit }}</strong></dd>
         <dt>Reorder at</dt><dd>{{ part.reorder_level|floatformat:"-2" }} {{ part.unit }}</dd>
         <dt>Unit cost</dt><dd>{{ part.cost }}</dd>

@@ -1,10 +1,12 @@
 import json
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Q, Sum
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
@@ -13,7 +15,7 @@ from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 
 from core import hooks
-from core.trees import sorted_by_path
+from core.trees import link_parents, sorted_by_path
 
 from . import lookup
 from .forms import AttributeFormSet, CategoryForm, LocationForm, PartForm, StockMoveForm
@@ -31,6 +33,7 @@ class PartListView(LoginRequiredMixin, ListView):
             qs = qs.filter(
                 Q(part_number__icontains=word) | Q(name__icontains=word)
                 | Q(category__name__icontains=word) | Q(location__name__icontains=word)
+                | Q(location__code__iexact=word)
                 | Q(attribute_values__value__icontains=word)
             )
         if g.get('category'):
@@ -61,7 +64,8 @@ class PartDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         return super().get_context_data(
             **kwargs,
-            moves=self.object.moves.select_related('user', 'task')[:50],
+            moves=self.object.moves.select_related('user', 'task', 'from_location', 'to_location')[:50],
+            move_locations=move_locations(),
             attribute_values=self.object.attribute_values.select_related('attribute'),
             panels=hooks.collect('part_detail_panels', self.request, self.object),
         )
@@ -128,18 +132,23 @@ def category_add_attributes(request, pk):
     return JsonResponse({'attributes': result})
 
 
+def move_locations():
+    """Every location, in tree order, for "move to" pickers."""
+    return sorted_by_path(link_parents(Location.objects.all()))
+
+
 class MoveListView(LoginRequiredMixin, ListView):
     model = StockMove
     paginate_by = 100
 
     def get_queryset(self):
-        qs = StockMove.objects.select_related('part', 'task', 'user')
+        qs = StockMove.objects.select_related('part__location', 'task', 'user', 'from_location', 'to_location')
         if self.request.GET.get('type') in StockMove.Type.values:
             qs = qs.filter(move_type=self.request.GET['type'])
         return qs
 
     def get_context_data(self, **kwargs):
-        return super().get_context_data(**kwargs, types=StockMove.Type.choices)
+        return super().get_context_data(**kwargs, types=StockMove.Type.choices, move_locations=move_locations())
 
 
 class MoveCreateView(LoginRequiredMixin, FormView):
@@ -206,14 +215,24 @@ class LocationListView(LoginRequiredMixin, ListView):
     template_name = 'inventory/tree_list.html'
 
     def get_queryset(self):
-        return sorted_by_path(
-            Location.objects.select_related('parent').prefetch_related('images').annotate(part_count=Count('parts'))
-        )
+        nodes = link_parents(Location.objects.prefetch_related('images').annotate(
+            own_parts=Count('parts'), own_quantity=Sum('parts__quantity_on_hand'),
+        ))
+        # Totals include sub-locations, like the part list's location filter.
+        for n in nodes:
+            n.part_count, n.quantity, n.sub_count = 0, Decimal(0), 0
+        for n in nodes:
+            for i, a in enumerate(reversed(n.ancestors())):
+                a.part_count += n.own_parts
+                a.quantity += n.own_quantity or 0
+                if i:
+                    a.sub_count += 1
+        return sorted_by_path(nodes)
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
             **kwargs, heading='Locations', create_url=reverse('inventory:location_create'), filter_param='location',
-            show_images=True,
+            show_images=True, show_codes=True, show_stock=True,
         )
 
 
@@ -226,6 +245,7 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
             **kwargs,
             children=sorted_by_path(loc.children.annotate(part_count=Count('parts'))),
             parts=loc.parts.select_related('category').prefetch_related('images'),
+            move_locations=move_locations(),
         )
 
 
@@ -250,3 +270,92 @@ class LocationUpdateView(LoginRequiredMixin, UpdateView):
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(**kwargs, heading=f'Edit {self.object}', cancel_url=self.object.get_absolute_url())
+
+
+@login_required
+def location_generate(request, pk=None):
+    """Make a block of sub-locations at once, e.g. rack rows × racks × shelves."""
+    from . import locations as gen
+
+    parent = get_object_or_404(Location, pk=pk) if pk else None
+    rows = [{'name': 'Rack row', 'count': 4, 'style': 'A', 'start': ''},
+            {'name': 'Rack', 'count': 6, 'style': '1', 'start': ''},
+            {'name': 'Shelf', 'count': 4, 'style': 'A', 'start': ''}]
+    errors = []
+    if request.method == 'POST':
+        rows = [{key: request.POST.get(f'level-{i}-{key}', '') for key in ('name', 'count', 'style', 'start')}
+                for i in range(gen.MAX_LEVELS + 2)]
+        rows = [r for r in rows if r['name'].strip() or r['count'].strip()]
+        chosen = request.POST.get('parent')
+        parent = Location.objects.filter(pk=chosen).first() if chosen else None
+        try:
+            levels = gen.clean_levels(rows)
+        except ValidationError as exc:
+            errors = exc.messages
+        else:
+            created, existing = gen.generate(parent, levels)
+            note = f' ({existing} already existed and were kept)' if existing else ''
+            messages.success(request, f'Created {created} location{"s" if created != 1 else ""}{note}.')
+            return redirect(parent.get_absolute_url() if parent else reverse('inventory:location_list'))
+    all_locations = sorted_by_path(Location.objects.all())
+    return render(request, 'inventory/location_generate.html', {
+        'parent': parent, 'rows': rows, 'errors': errors, 'styles': gen.STYLES,
+        'locations': all_locations,
+        'codes': {str(loc.pk): loc.code for loc in all_locations},
+        'max_locations': gen.MAX_LOCATIONS,
+    })
+
+
+@login_required
+def location_delete(request, pk):
+    """Delete a location and its sub-locations, but only while no parts are kept in any of them."""
+    loc = get_object_or_404(Location, pk=pk)
+    ids = {loc.pk, *loc.descendant_ids()}
+    parts = Part.objects.filter(location_id__in=ids).select_related('location')
+    if request.method == 'POST' and not parts.exists():
+        parent = loc.parent
+        doomed = list(Location.objects.filter(pk__in=ids))
+        with transaction.atomic():
+            # Children first: a location with sub-locations can't be deleted before them.
+            for node in sorted(doomed, key=lambda n: n.full_path().count(' > '), reverse=True):
+                node.delete()
+        messages.success(request, f'Deleted {loc.full_path()}' + (f' and {len(ids) - 1} sub-location{"s" if len(ids) != 2 else ""}.' if len(ids) > 1 else '.'))
+        back = request.POST.get('next') or ''
+        if url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+            return redirect(back)
+        return redirect(parent.get_absolute_url() if parent else reverse('inventory:location_list'))
+    return render(request, 'inventory/location_delete.html', {
+        'location': loc, 'sub_count': len(ids) - 1, 'parts': parts[:50], 'part_count': parts.count(),
+    })
+
+
+@login_required
+@require_POST
+def transfer(request):
+    """Move the selected parts' stock to another location (from the stock moves
+    list, a location's parts or a part's page)."""
+    back = request.POST.get('next') or ''
+    if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        back = reverse('inventory:move_list')
+    location = Location.objects.filter(pk=request.POST.get('location') or None).first()
+    ids = {int(p) for p in request.POST.getlist('parts') if p.isdigit()}
+    if location is None:
+        messages.error(request, 'Pick the location to move to.')
+        return redirect(back)
+    if not ids:
+        messages.error(request, 'Select the rows to move first.')
+        return redirect(back)
+    moved, already = [], 0
+    with transaction.atomic():
+        for part in Part.objects.filter(pk__in=ids).select_related('location'):
+            if StockMove.transfer(part, location, user=request.user, note=request.POST.get('note', '').strip()[:255]):
+                moved.append(part.part_number)
+            else:
+                already += 1
+    where = f'{location.code} ({location.name})' if location.code else location.full_path()
+    if moved:
+        shown = ', '.join(moved[:5]) + (f' and {len(moved) - 5} more' if len(moved) > 5 else '')
+        messages.success(request, f'Moved {shown} to {where}.')
+    if already:
+        messages.info(request, f'{already} part{"s were" if already != 1 else " was"} already in {where}.')
+    return redirect(back)

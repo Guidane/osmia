@@ -156,6 +156,9 @@ class Device(models.Model):
 
 
 class Connector(models.Model):
+    def audit_record(self):
+        return self.device  # logged on the device
+
     class Side(models.TextChoices):
         LEFT = 'left', 'Left'
         RIGHT = 'right', 'Right'
@@ -189,6 +192,9 @@ class Connector(models.Model):
 
 
 class Pin(models.Model):
+    def audit_record(self):
+        return self.connector.device  # logged on the device
+
     connector = models.ForeignKey(Connector, on_delete=models.CASCADE, related_name='pins')
     position = models.PositiveIntegerField()
     label = models.CharField(max_length=20, help_text='The number printed on the connector, e.g. 13.')
@@ -204,6 +210,7 @@ class Pin(models.Model):
 
 class DeviceVersion(models.Model):
     """An immutable snapshot of a device definition, in harness format."""
+    audit_log = False  # history/bookkeeping, not an item people change
 
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='versions')
     version = models.PositiveIntegerField()

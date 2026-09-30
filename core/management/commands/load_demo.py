@@ -4,6 +4,7 @@ from importlib.util import find_spec
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from core import audit
 from core.modules import dependency_order
 
 
@@ -15,6 +16,7 @@ class Command(BaseCommand):
         for config in dependency_order():
             if find_spec(f"{config.name}.demo") is None:
                 continue
-            import_module(f"{config.name}.demo").load()
+            with audit.acting(config.label, source='demo data'):
+                import_module(f"{config.name}.demo").load()
             self.stdout.write(f"  loaded demo data for {config.label}")
         self.stdout.write(self.style.SUCCESS("Demo data loaded. Log in as admin / admin."))

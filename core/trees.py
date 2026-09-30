@@ -1,4 +1,6 @@
 """Shared support for nested records (categories, locations, departments, budgets)."""
+import re
+
 from django import forms
 from django.db import models
 
@@ -50,8 +52,32 @@ class TreeNodeForm(forms.ModelForm):
         self.fields['parent'].queryset = qs
 
 
+def link_parents(nodes):
+    """Load ``nodes`` (all of one tree) and connect each to its parent in
+    memory, so walking up the tree (ancestors, full_path) needs no queries."""
+    nodes = list(nodes)
+    by_pk = {n.pk: n for n in nodes}
+    for n in nodes:
+        if n.parent_id in by_pk:
+            n.parent = by_pk[n.parent_id]
+    return nodes
+
+
+def natural_key(text):
+    """Sort "Rack 2" before "Rack 10": digits compare as numbers."""
+    parts = re.split(r'(\d+)', text.lower())
+    return tuple(int(p) if i % 2 else p for i, p in enumerate(parts))
+
+
 def sorted_by_path(nodes):
-    return sorted(nodes, key=lambda n: n.full_path().lower())
+    """Tree order: each node straight after its parent, siblings in natural
+    order. Sets ``depth`` on each node (0 for the top level)."""
+    keyed = []
+    for n in nodes:
+        chain = n.ancestors()
+        n.depth = len(chain) - 1
+        keyed.append((tuple((natural_key(a.name), a.pk or 0) for a in chain), n))
+    return [n for _, n in sorted(keyed, key=lambda item: item[0])]
 
 
 def get_or_create_path(model, path, **defaults):

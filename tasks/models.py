@@ -9,6 +9,7 @@ class TaskBatch(models.Model):
     """Tasks created together by an automation rule, e.g. the checks for a
     newly placed order. When the last of them is done the group is complete,
     which rules can react to ("All tasks created by a rule are done")."""
+    audit_log = False  # history/bookkeeping, not an item people change
 
     name = models.CharField(max_length=200)
     rule_id = models.PositiveIntegerField(null=True, blank=True, help_text='The automation rule that created the tasks.')

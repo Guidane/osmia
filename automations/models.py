@@ -44,6 +44,7 @@ class Rule(models.Model):
 
 class Run(models.Model):
     """One time a rule fired: what it was about and what it did."""
+    audit_log = False  # history/bookkeeping, not an item people change
 
     class Status(models.TextChoices):
         OK = 'ok', 'Done'
@@ -67,6 +68,7 @@ class Run(models.Model):
 
 
 class Notification(models.Model):
+    audit_log = False  # history/bookkeeping, not an item people change
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications')
     message = models.CharField(max_length=500)
     url = models.CharField(max_length=300, blank=True)

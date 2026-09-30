@@ -17,6 +17,7 @@
         {% url item.url_name as item_url %}
         <a href="{{ item_url }}" class="{% if request.path == item_url %}active{% endif %}">{{ item.label }}</a>
       {% endfor %}
+      {% if module_log_url %}<a href="{{ module_log_url }}" title="Every change in {{ current_module.manifest.title }}">Log</a>{% endif %}
     </nav>
   {% endif %}
   <div class="spacer"></div>

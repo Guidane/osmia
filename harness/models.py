@@ -104,6 +104,7 @@ class HarnessProject(models.Model):
 
 
 class HarnessProjectVersion(models.Model):
+    audit_log = False  # history/bookkeeping, not an item people change
     project = models.ForeignKey(HarnessProject, on_delete=models.CASCADE, related_name='versions')
     version = models.PositiveIntegerField()
     data = models.JSONField()

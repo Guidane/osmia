@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from core import automation
+from core import audit, automation
 
 from .models import Rule, Run
 
@@ -70,7 +70,7 @@ def run_rule(rule, event_key, obj, source=None):
     known = automation.actions()
     lines, status = [], Run.Status.OK
     try:
-        with transaction.atomic():
+        with audit.acting('automations', source=f'rule "{rule.name}"'), transaction.atomic():
             for step in rule.actions:
                 action = known.get(step.get('action'))
                 if action is None:
