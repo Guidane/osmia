@@ -70,9 +70,11 @@ class DeviceDetailView(LoginRequiredMixin, DetailView):
                 # Pins with a value first (in natural order, e.g. 2 before 10), empty ones last, in pin order.
                 filled = sorted((p for p in pins if get(p) not in ('', None)), key=lambda p: natural_key(str(get(p))), reverse=descending)
                 pins = filled + [p for p in pins if get(p) in ('', None)]
-            context.update(pins=pins, sort=sort, sort_key=key if key in PIN_SORTS else '', sort_desc=descending, sort_columns=[
-                ('pin', 'Pin'), ('signal', 'Signal'), ('tag1', 'Tag 1'), ('tag2', 'Tag 2'), ('tag3', 'Tag 3'), ('tag4', 'Tag 4'),
-                ('set', 'Set'), ('set_type', 'Set type'),
+            n = selected.tag_column_count()
+            context.update(pins=pins, sort=sort, sort_key=key if key in PIN_SORTS else '', sort_desc=descending,
+                           tag_slice=f':{n}', sort_columns=[
+                ('pin', 'Pin'), *[(f'tag{i}', f'Tag {i}') for i in range(1, n + 1)],
+                ('signal', 'Signal'), ('set', 'Set'), ('set_type', 'Set type'),
             ])
         else:
             context.update(
@@ -125,6 +127,19 @@ def device_from_assembly(request, assembly_pk):
     return redirect(device)
 
 
+def part_info():
+    """{part id: its details} for the connector editor, which shows the chosen part's details."""
+    from inventory.models import Part
+    info = {}
+    for p in Part.objects.filter(is_active=True).select_related('category__parent').prefetch_related('attribute_values__attribute'):
+        info[str(p.pk)] = {
+            'part_number': p.part_number, 'name': p.name, 'url': p.get_absolute_url(),
+            'category': p.category.full_path() if p.category else '',
+            'attributes': [[v.attribute.name, v.value] for v in p.attribute_values.all() if v.value],
+        }
+    return info
+
+
 @login_required
 def connector_form(request, device_pk, pk=None):
     device = get_object_or_404(Device, pk=device_pk)
@@ -155,8 +170,13 @@ def connector_form(request, device_pk, pk=None):
         if request.POST.get('continue'):
             return redirect('devices:connector_edit', device.pk, connector.pk)
         return redirect(f'{device.get_absolute_url()}?connector={connector.pk}')
+    try:
+        tag_count = max(1, min(4, int(form['tag_columns'].value() or 1)))
+    except (TypeError, ValueError):
+        tag_count = 1
     return render(request, 'devices/connector_form.html', {
-        'device': device, 'connector': connector, 'form': form, 'formset': formset,
+        'device': device, 'connector': connector, 'form': form, 'formset': formset, 'part_info': part_info(),
+        'tag_count': tag_count, 'tag_numbers': [1, 2, 3, 4],
         'heading': f'{device.name} · {connector.designator}' if pk else f'{device.name} · new connector',
     })
 

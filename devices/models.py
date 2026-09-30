@@ -88,8 +88,7 @@ class Device(models.Model):
                 {
                     'id': c.designator,
                     'side': c.side,
-                    'gender': c.gender,
-                    'details': c.details,
+                    'tag_columns': c.tag_column_count(),
                     'pins': [
                         {'id': str(p.position), 'label': p.label, 'signal': p.signal, 'tags': p.tags,
                          'set': p.set_number, 'set_type': p.set_type}
@@ -127,8 +126,7 @@ class Device(models.Model):
             connector = Connector.objects.create(
                 device=self, designator=designator, position=c_index,
                 side=c.get('side') if c.get('side') in Connector.Side.values else Connector.Side.RIGHT,
-                gender=c.get('gender') if c.get('gender') in Connector.Gender.values else '',
-                details=(c.get('details') or '')[:200],
+                tag_columns=min(4, max(1, int(c.get('tag_columns') or 1))) if str(c.get('tag_columns') or '1').isdigit() else 1,
                 part_id=part_id, description=description,
             )
             Pin.objects.bulk_create(
@@ -196,8 +194,8 @@ class Device(models.Model):
         """A copy of ``connector`` (settings and pins) on this device."""
         copy = Connector.objects.create(
             device=self, designator=designator or self.next_designator(connector.designator[:1] or 'J'),
-            side=connector.side, gender=connector.gender, part=connector.part, details=connector.details,
-            description=connector.description, position=self.connectors.count() + 1,
+            side=connector.side, part=connector.part,
+            description=connector.description, position=self.connectors.count() + 1, tag_columns=connector.tag_column_count(),
         )
         Pin.objects.bulk_create(
             Pin(connector=copy, position=p.position, label=p.label, signal=p.signal, **p.tag_fields(),
@@ -217,11 +215,12 @@ class Device(models.Model):
             origin=device.origin, color='#6b7280', responsible=user,
             notes=f'Extends {device.name} {connector.designator}: J02 has the same pinout.',
         )
-        opposite = {'pin': 'socket', 'socket': 'pin'}.get(connector.gender, '')
-        inp = Connector.objects.create(device=ext, designator='J01', side=Connector.Side.LEFT, position=1, gender=opposite,
+        inp = Connector.objects.create(device=ext, designator='J01', side=Connector.Side.LEFT, position=1,
+                                       tag_columns=connector.tag_column_count(),
                                        description=f'In, from {device.name} {connector.designator}')
         out = Connector.objects.create(device=ext, designator='J02', side=Connector.Side.RIGHT, position=2,
-                                       gender=connector.gender, part=connector.part, details=connector.details,
+                                       part=connector.part,
+                                       tag_columns=connector.tag_column_count(),
                                        description=f'Out, same pinout as {device.name} {connector.designator}')
         for p in connector.pins.all():
             kw = dict(position=p.position, label=p.label, signal=p.signal, set_number=p.set_number, set_type=p.set_type, **p.tag_fields())
@@ -240,10 +239,6 @@ class Connector(models.Model):
         LEFT = 'left', 'Left'
         RIGHT = 'right', 'Right'
 
-    class Gender(models.TextChoices):
-        PIN = 'pin', 'Pin (male)'
-        SOCKET = 'socket', 'Socket (female)'
-
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='connectors')
     designator = models.CharField(max_length=20, help_text='e.g. J01 (jack on the device) or P01 (plug).')
     side = models.CharField(max_length=5, choices=Side, default=Side.RIGHT, help_text='Where it sits in the harness designer.')
@@ -251,10 +246,9 @@ class Connector(models.Model):
         'inventory.Part', null=True, blank=True, on_delete=models.SET_NULL, related_name='device_connectors',
         verbose_name='Physical connector', help_text='The connector part, e.g. a D-sub 25 socket. Its description is shown as the connector type in harnesses.',
     )
-    gender = models.CharField(max_length=10, choices=Gender, blank=True)
-    details = models.CharField('Connector details', max_length=200, blank=True,
-                               help_text='When no part is set: what the connector is, e.g. "M12 8-pin A-coded".')
-    description = models.CharField(max_length=200, blank=True, help_text='e.g. "Main power in".')
+    # How many of the pins' tag columns (Tag 1..4) this connector shows; more are added in the pin editor.
+    tag_columns = models.PositiveSmallIntegerField(default=1)
+    description = models.CharField('Function', max_length=200, blank=True, help_text='What the connector is for, e.g. "Main power in".')
     position = models.PositiveIntegerField(default=0)
     images = GenericRelation('core.Image')  # e.g. a drawing of the pinout
 
@@ -275,10 +269,30 @@ class Connector(models.Model):
         signals = [p.signal for p in self.pins.all() if p.signal]
         return ', '.join(sorted(set(signals)))
 
+    MAX_TAG_COLUMNS = 4
+
+    def tag_column_count(self):
+        """The tag columns to show: as many as set, and never fewer than the pins use."""
+        used = 0
+        for pin in self.pins.all():
+            for i, value in enumerate(pin.tags, start=1):
+                if value:
+                    used = max(used, i)
+        return max(1, min(self.MAX_TAG_COLUMNS, max(self.tag_columns or 1, used)))
+
+    def tag_column_numbers(self):
+        return list(range(1, self.tag_column_count() + 1))
+
     @property
     def type_label(self):
-        """What the connector is: its part's description, else its details."""
-        return (self.part.name or self.part.part_number) if self.part else self.details
+        """What the connector is: its part's description."""
+        return (self.part.name or self.part.part_number) if self.part else ''
+
+    def part_details(self):
+        """The connector part's attributes, e.g. [("Positions", "25"), ...]."""
+        if not self.part:
+            return []
+        return [(v.attribute.name, v.value) for v in self.part.attribute_values.select_related('attribute') if v.value]
 
     def get_absolute_url(self):
         return f'{self.device.get_absolute_url()}?connector={self.pk}'

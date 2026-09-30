@@ -6,8 +6,10 @@
     {% csrf_token %}
     {{ form.non_field_errors }}
     <div class="form-grid">
-      {% for field in form %}{% include "core/_field.html" %}{% endfor %}
+      {% for field in form.visible_fields %}{% include "core/_field.html" %}{% endfor %}
     </div>
+    {% for h in form.hidden_fields %}{{ h }}{% endfor %}
+    <div id="part-details" class="part-details" hidden></div>
 
     <fieldset>
       <legend>Pins</legend>
@@ -18,14 +20,11 @@
         "+ Add new…" adds to it.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
-      <table class="list compact">
+      <table class="list compact" id="pin-table">
         <thead id="pin-sort"><tr>
           <th><button type="button" class="sort-head" data-col="0">Pin</button></th>
-          <th><button type="button" class="sort-head" data-col="1">Signal</button></th>
-          <th><button type="button" class="sort-head" data-col="2">Tag 1</button></th>
-          <th><button type="button" class="sort-head" data-col="3">Tag 2</button></th>
-          <th><button type="button" class="sort-head" data-col="4">Tag 3</button></th>
-          <th><button type="button" class="sort-head" data-col="5">Tag 4</button></th>
+          {% for n in tag_numbers %}<th class="tag-col-{{ n }}" {% if n > tag_count %}hidden{% endif %}><button type="button" class="sort-head" data-col="{{ n }}">Tag {{ n }}</button></th>{% endfor %}
+          <th><button type="button" class="sort-head" data-col="5">Signal</button></th>
           <th><button type="button" class="sort-head" data-col="6">Set</button></th>
           <th><button type="button" class="sort-head" data-col="7">Set type</button></th>
           <th></th>
@@ -34,8 +33,11 @@
         {% for f in formset %}
           <tr class="pin-row">
             <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.label }}{{ f.label.errors }}</td>
+            <td class="tag-col-1">{{ f.tag1 }}</td>
+            <td class="tag-col-2" {% if 2 > tag_count %}hidden{% endif %}>{{ f.tag2 }}</td>
+            <td class="tag-col-3" {% if 3 > tag_count %}hidden{% endif %}>{{ f.tag3 }}</td>
+            <td class="tag-col-4" {% if 4 > tag_count %}hidden{% endif %}>{{ f.tag4 }}</td>
             <td>{{ f.signal }}{{ f.signal.errors }}</td>
-            <td>{{ f.tag1 }}</td><td>{{ f.tag2 }}</td><td>{{ f.tag3 }}</td><td>{{ f.tag4 }}</td>
             <td>{{ f.set_number }}{{ f.set_number.errors }}</td>
             <td>{{ f.set_type }}{{ f.set_type.errors }}</td>
             <td class="pin-remove-cell"><span hidden>{{ f.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
@@ -46,14 +48,19 @@
       <template id="pin-template">
         <tr class="pin-row">
           <td>{% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}{{ formset.empty_form.label }}</td>
+          <td class="tag-col-1">{{ formset.empty_form.tag1 }}</td>
+          <td class="tag-col-2">{{ formset.empty_form.tag2 }}</td>
+          <td class="tag-col-3">{{ formset.empty_form.tag3 }}</td>
+          <td class="tag-col-4">{{ formset.empty_form.tag4 }}</td>
           <td>{{ formset.empty_form.signal }}</td>
-          <td>{{ formset.empty_form.tag1 }}</td><td>{{ formset.empty_form.tag2 }}</td><td>{{ formset.empty_form.tag3 }}</td><td>{{ formset.empty_form.tag4 }}</td>
           <td>{{ formset.empty_form.set_number }}</td>
           <td>{{ formset.empty_form.set_type }}</td>
           <td class="pin-remove-cell"><span hidden>{{ formset.empty_form.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
         </tr>
       </template>
       <button type="button" class="btn small" id="btn-add-pin">+ Add pin</button>
+      <button type="button" class="btn small" id="btn-add-tag-col" title="Show another tag column (up to 4)">+ Tag column</button>
+      <button type="button" class="btn small" id="btn-remove-tag-col" title="Hide the last tag column (only when it's empty)">− Tag column</button>
     </fieldset>
 
     <div class="actions">
@@ -68,16 +75,26 @@
   </form>
   {% endif %}
 </div>
+{{ part_info|json_script:"part-info" }}
 <script>
-  // "Connector details" is for connectors without a part: shown only then.
+  // The chosen connector part's details, under the form.
   (function () {
     const part = document.getElementById('id_part');
-    const details = document.getElementById('id_details');
-    if (!part || !details) return;
-    const box = details.closest('.field');
-    const sync = () => { box.hidden = !!part.value; };
-    part.addEventListener('change', sync);
-    sync();
+    const box = document.getElementById('part-details');
+    const info = JSON.parse(document.getElementById('part-info').textContent);
+    if (!part || !box) return;
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function show() {
+      const p = info[part.value];
+      box.hidden = !p;
+      if (!p) { box.innerHTML = ''; return; }
+      const rows = [['Description', p.name], ['Category', p.category], ...p.attributes].filter(([, v]) => v);
+      box.innerHTML = `<h3><a href="${esc(p.url)}" target="_blank">${esc(p.part_number)}</a> <span class="muted">connector part</span></h3>` +
+        (rows.length ? `<dl class="props">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
+                     : '<p class="muted">This part has no details yet.</p>');
+    }
+    part.addEventListener('change', show);
+    show();
   })();
 
   // Tag dropdowns: "+ Add new…" asks for the value, adds it to that column's
@@ -102,6 +119,57 @@
       const existing = [...select.options].find(o => o.value.toLowerCase() === name.toLowerCase());
       select.value = existing ? existing.value : name;
       previous.set(select, select.value);
+    });
+  })();
+
+  // Tag columns: start with one, "+ Tag column" shows the next (up to 4),
+  // "− Tag column" hides the last one again when no pin uses it.
+  (function () {
+    const table = document.getElementById('pin-table');
+    const count = document.getElementById('id_tag_columns');
+    const add = document.getElementById('btn-add-tag-col');
+    const remove = document.getElementById('btn-remove-tag-col');
+    const current = () => Math.min(4, Math.max(1, parseInt(count.value, 10) || 1));
+    const cells = n => [...table.querySelectorAll(`.tag-col-${n}`)];
+    function show() {
+      const n = current();
+      for (let i = 1; i <= 4; i++) cells(i).forEach(c => { c.hidden = i > n; });
+      add.disabled = n >= 4;
+      remove.disabled = n <= 1;
+    }
+    add.addEventListener('click', () => { count.value = Math.min(4, current() + 1); show(); });
+    remove.addEventListener('click', () => {
+      const n = current();
+      const used = cells(n).some(c => { const s = c.querySelector('select'); return s && s.value && s.value !== '__new__'; });
+      if (used) { window.alert(`Some pins have a Tag ${n}. Clear them first to remove the column.`); return; }
+      count.value = n - 1;
+      show();
+    });
+    // New pin rows follow the columns shown.
+    document.getElementById('btn-add-pin').addEventListener('click', () => setTimeout(show));
+    show();
+  })();
+
+  // Sets: pins with the same set number are one cable set, so they share a
+  // type. Changing one pin's type changes the rest of its set; giving a pin
+  // a set number that's already used takes that set's type.
+  (function () {
+    const rows = document.getElementById('pin-rows');
+    const live = () => [...rows.children].filter(tr => !tr.classList.contains('pin-removed'));
+    const numberOf = tr => (tr.querySelector('input[name$="-set_number"]') || {}).value || '';
+    const typeSelect = tr => tr.querySelector('select[name$="-set_type"]');
+    rows.addEventListener('change', e => {
+      const tr = e.target.closest('tr');
+      if (!tr) return;
+      const number = numberOf(tr).trim();
+      if (!number) return;
+      const others = live().filter(o => o !== tr && numberOf(o).trim() === number);
+      if (e.target.matches('select[name$="-set_type"]')) {
+        others.forEach(o => { typeSelect(o).value = e.target.value; });
+      } else if (e.target.matches('input[name$="-set_number"]')) {
+        const typed = others.map(typeSelect).find(s => s.value);
+        if (typed) typeSelect(tr).value = typed.value;
+      }
     });
   })();
 

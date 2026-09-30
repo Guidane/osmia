@@ -24,8 +24,36 @@ def _signals():
             TagOption.objects.get_or_create(column=column, name=name)
 
 
+def _network_demo():
+    """A device showing pin tags in two columns and twisted-pair sets: added
+    when missing, so older demo databases get it too."""
+    if Device.objects.filter(part_number='NET-04').exists():
+        return
+    switch = Device.objects.create(
+        name='Test network switch', part_number='NET-04', origin=Device.Origin.EXTERNAL, role=Device.Role.OTHER,
+        manufacturer='Generic', model_number='SW-4P', color='#1f7a8c',
+        notes='Demo: Ethernet ports with the pairs as sets, tags in two columns.',
+    )
+    for n in (1, 2):
+        port = Connector.objects.create(device=switch, designator=f'J{n:02d}', side='right' if n == 1 else 'left', position=n,
+                                        tag_columns=2,
+                                        description=f'Ethernet port {n}')
+        rows = [  # label, signal, tag 1, tag 2, set, set type
+            ('1', 'TxP', f'ETH{n}_TX+', 'Pair 2', 1, 'twisted'), ('2', 'TxN', f'ETH{n}_TX-', 'Pair 2', 1, 'twisted'),
+            ('3', 'RxP', f'ETH{n}_RX+', 'Pair 3', 2, 'twisted'), ('6', 'RxN', f'ETH{n}_RX-', 'Pair 3', 2, 'twisted'),
+            ('4', 'NC', '', 'Pair 1', None, ''), ('5', 'NC', '', 'Pair 1', None, ''),
+            ('7', 'NC', '', 'Pair 4', None, ''), ('8', 'NC', '', 'Pair 4', None, ''),
+            ('S', 'SHIELD', f'ETH{n}_SHIELD', '', None, ''),
+        ]
+        for i, (label, signal, t1, t2, set_number, set_type) in enumerate(rows, start=1):
+            Pin.objects.create(connector=port, position=i, label=label, signal=signal, tag1=t1, tag2=t2,
+                               set_number=set_number, set_type=set_type)
+    switch.snapshot()
+
+
 def load():
     if Device.objects.exists():
+        _network_demo()
         _signals()
         return
     parts = {p.part_number: p for p in Part.objects.all()}
@@ -78,4 +106,5 @@ def load():
     inp = Connector.objects.create(device=load_dev, designator='J01', side='left', position=1, description='Load input')
     _pins(inp, [('+', 'PWR'), ('-', 'GND')])
     load_dev.snapshot()
+    _network_demo()
     _signals()

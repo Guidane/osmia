@@ -37,8 +37,9 @@
       </div>
       <dl class="props connector-props">
         <dt>Connector part</dt>
-        <dd>{% if c.part %}<a href="{{ c.part.get_absolute_url }}">{{ c.part.part_number }}</a>{% if c.part.name %} <span class="muted">{{ c.part.name }}</span>{% endif %}{% elif c.details %}{{ c.details }}{% else %}<span class="muted">not set</span>{% endif %}</dd>
-        <dt>Gender</dt><dd>{{ c.get_gender_display|default:"—" }}</dd>
+        <dd>{% if c.part %}<a href="{{ c.part.get_absolute_url }}">{{ c.part.part_number }}</a>{% if c.part.name %} <span class="muted">{{ c.part.name }}</span>{% endif %}{% else %}<span class="muted">not set</span>{% endif %}</dd>
+        {% for name, value in c.part_details %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% endfor %}
+        <dt>Function</dt><dd>{{ c.description|default:"—" }}</dd>
         <dt>Harness plug</dt><dd>{{ c.mating_designator }}</dd>
         <dt>Side in designer</dt><dd>{{ c.get_side_display }}</dd>
       </dl>
@@ -52,8 +53,9 @@
         </tr></thead>
         <tbody>
         {% for p in pins %}
-          <tr><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td>
-              {% for t in p.tags %}<td>{% if t %}<code>{{ t }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>{% endfor %}
+          <tr><td>{{ p.label }}</td>
+              {% for t in p.tags|slice:tag_slice %}<td>{% if t %}<code>{{ t }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>{% endfor %}
+              <td>{{ p.signal|default:"—" }}</td>
               <td>{{ p.set_number|default:"—" }}</td><td>{{ p.get_set_type_display|default:"—" }}</td></tr>
         {% empty %}
           <tr><td colspan="8" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>

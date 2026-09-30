@@ -33,11 +33,18 @@ class DeviceForm(forms.ModelForm):
 class ConnectorForm(forms.ModelForm):
     class Meta:
         model = Connector
-        fields = ['designator', 'side', 'gender', 'part', 'details', 'description']
+        fields = ['designator', 'side', 'part', 'description', 'tag_columns']
+        widgets = {'tag_columns': forms.HiddenInput}  # set with "+ Tag column" in the pin table
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['part'].queryset = Part.objects.filter(is_active=True).select_related('category')
+        self.fields['tag_columns'].required = False
+        if self.instance.pk:
+            self.initial['tag_columns'] = self.instance.tag_column_count()
+
+    def clean_tag_columns(self):
+        return min(Connector.MAX_TAG_COLUMNS, max(1, self.cleaned_data.get('tag_columns') or 1))
 
     def clean_designator(self):
         designator = self.cleaned_data['designator'].strip().upper()
@@ -97,6 +104,20 @@ class BasePinFormSet(forms.BaseInlineFormSet):
 
     def get_form_kwargs(self, index):
         return {**super().get_form_kwargs(index), 'signals': self._signals, 'tag_options': self._tag_options}
+
+    def clean(self):
+        super().clean()
+        # One type per set: pins with the same set number are one cable set.
+        types = {}
+        for form in self.forms:
+            data = getattr(form, 'cleaned_data', None) or {}
+            if data.get('DELETE') or not data.get('set_number'):
+                continue
+            number, kind = data['set_number'], data.get('set_type') or ''
+            if number in types and types[number] != kind:
+                form.add_error('set_type', f'Set {number} is already {Pin.SetType(types[number]).label.lower() if types[number] else "without a type"}; '
+                                           'pins in one set share a type.')
+            types.setdefault(number, kind)
 
     def save_tag_options(self):
         """Values added with "+ Add new…" join their column's list."""

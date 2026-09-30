@@ -1920,7 +1920,7 @@ function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
 // the Part page in Osmia) and type, e.g. "DB25-F · D-sub 25 (female)".
 function connectorPartHtml(connector) {
   const part = connector && connector.part;
-  if (!part) return connector && connector.details ? `<div class="conn-part">${escapeHtml(connector.details)}</div>` : "";
+  if (!part) return "";
   const type = part.type && part.type !== part.part_number ? ` · ${escapeHtml(part.type)}` : "";
   return `<div class="conn-part"><a href="${escapeHtml(part.url)}" target="_blank" title="Open ${escapeHtml(part.part_number)} in Osmia">${escapeHtml(part.part_number)}</a>${type}</div>`;
 }
