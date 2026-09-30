@@ -3,15 +3,17 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
 from django.db.models import Count, F, Q
+from django.forms import modelformset_factory
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from assemblies.models import Assembly
 from core import hooks
+from core.trees import natural_key
 
-from .forms import ConnectorForm, DeviceForm, PinFormSet
-from .models import Connector, Device, Pin
+from .forms import ConnectorForm, DeviceForm, PinFormSet, SignalForm
+from .models import Connector, Device, Pin, PinMap, Signal
 
 
 class DeviceListView(LoginRequiredMixin, ListView):
@@ -49,10 +51,20 @@ class DeviceDetailView(LoginRequiredMixin, DetailView):
         wanted = self.request.GET.get('connector', '')
         selected = next((c for c in connectors if str(c.pk) == wanted), None)
         context = {'connectors': connectors, 'selected': selected}
-        if selected is None:
+        if selected is not None:
+            pins = list(selected.pins.all())
+            sort = self.request.GET.get('sort', '')
+            if sort == 'tag':
+                # Tagged pins first, by tag; untagged ones after, in pin order.
+                pins.sort(key=lambda p: (not p.tag, natural_key(p.tag)))
+            elif sort == 'signal':
+                pins.sort(key=lambda p: (not p.signal, natural_key(p.signal)))
+            context.update(pins=pins, sort=sort)
+        else:
             context.update(
                 versions=d.versions.select_related('created_by')[:20],
                 panels=hooks.collect('device_detail_panels', self.request, d),
+                pin_maps=d.pin_maps.select_related('from_pin__connector', 'to_pin__connector') if d.is_interconnect else [],
             )
         return super().get_context_data(**kwargs, **context)
 
@@ -107,7 +119,7 @@ def connector_form(request, device_pk, pk=None):
     else:
         n = device.connectors.count() + 1
         connector = Connector(device=device, position=n, designator=f'J{n:02d}')
-    form = ConnectorForm(request.POST or None, instance=connector, initial=None if pk else {'add_pins': 2})
+    form = ConnectorForm(request.POST or None, instance=connector)
     formset = PinFormSet(request.POST or None, instance=connector, prefix='pins')
     if request.method == 'POST' and form.is_valid() and formset.is_valid():
         with transaction.atomic():
@@ -123,8 +135,6 @@ def connector_form(request, device_pk, pk=None):
             for i, pin in enumerate(pins, start=1):
                 pin.connector, pin.position = connector, i
                 pin.save()
-            for i in range(len(pins) + 1, len(pins) + 1 + (form.cleaned_data.get('add_pins') or 0)):
-                Pin.objects.create(connector=connector, position=i, label=str(i))
             new_version = device.snapshot(request.user)
         messages.success(request, f'{connector.designator} saved.' + (f' Device is now v{device.version}.' if new_version else ''))
         if request.POST.get('continue'):
@@ -155,3 +165,94 @@ def activate_version(request, pk, version):
     device.activate_version(version)
     messages.success(request, f'Version {version} is current again.')
     return redirect(device)
+
+
+@login_required
+@require_POST
+def connector_clone(request, device_pk, pk):
+    """A copy of the connector and its pins, on the same device (next free J..)."""
+    device = get_object_or_404(Device, pk=device_pk)
+    connector = get_object_or_404(Connector, pk=pk, device=device)
+    with transaction.atomic():
+        copy = device.clone_connector(connector)
+        device.snapshot(request.user)
+    messages.success(request, f'Cloned {connector.designator} as {copy.designator}. Adjust it as needed.')
+    return redirect('devices:connector_edit', device.pk, copy.pk)
+
+
+# -- The shared signal list ------------------------------------------------------
+
+SignalFormSet = modelformset_factory(Signal, form=SignalForm, extra=1, can_delete=True)
+
+
+@login_required
+def signals(request):
+    """Signals are the same across all devices: edit the list here."""
+    formset = SignalFormSet(request.POST or None, queryset=Signal.objects.all(), prefix='signals')
+    if request.method == 'POST' and formset.is_valid():
+        blocked = []
+        with transaction.atomic():
+            for form in formset.forms:
+                if not form.has_changed() and not form.instance.pk:
+                    continue
+                if form in formset.deleted_forms:
+                    if form.instance.pk:
+                        used = form.instance.usage()
+                        if used:
+                            blocked.append(f'{form.instance.name} ({used} pin{"s" if used != 1 else ""})')
+                        else:
+                            form.instance.delete()
+                    continue
+                if form.instance.pk:
+                    old = Signal.objects.get(pk=form.instance.pk)
+                    new_name = form.cleaned_data['name']
+                    form.instance.name = old.name
+                    form.instance.description = form.cleaned_data.get('description', '')
+                    form.instance.rename(new_name)
+                elif form.cleaned_data.get('name'):
+                    form.save()
+        if blocked:
+            messages.error(request, 'Still used, so not deleted: ' + ', '.join(blocked) + '. Change those pins first.')
+        else:
+            messages.success(request, 'Signals saved.')
+        return redirect('devices:signals')
+    usage = dict(Pin.objects.exclude(signal='').values_list('signal').annotate(n=Count('id')))
+    return render(request, 'devices/signals.html', {'formset': formset, 'usage': usage})
+
+
+# -- Interconnects: which input pin goes to which output pin -------------------------
+
+@login_required
+def pin_mapping(request, pk):
+    device = get_object_or_404(Device, pk=pk)
+    connectors = list(device.connectors.prefetch_related('pins'))
+    pins = {str(p.pk): p for c in connectors for p in c.pins.all()}
+    if request.method == 'POST':
+        pairs = []
+        if request.POST.get('by_position'):
+            a = next((c for c in connectors if str(c.pk) == request.POST.get('from_connector')), None)
+            b = next((c for c in connectors if str(c.pk) == request.POST.get('to_connector')), None)
+            if a and b and a != b:
+                pairs = [(m.from_pin_id, m.to_pin_id) for m in device.pin_maps.all()]
+                pairs += list(zip([p.pk for p in a.pins.all()], [p.pk for p in b.pins.all()]))
+            else:
+                messages.error(request, 'Pick two different connectors to map pin by pin.')
+                return redirect('devices:pin_mapping', device.pk)
+        else:
+            for f, t in zip(request.POST.getlist('from'), request.POST.getlist('to')):
+                if f in pins and t in pins and f != t:
+                    pairs.append((pins[f].pk, pins[t].pk))
+        with transaction.atomic():
+            device.pin_maps.all().delete()
+            for f, t in dict.fromkeys(pairs):
+                PinMap.objects.create(device=device, from_pin_id=f, to_pin_id=t)
+            if device.role != Device.Role.INTERCONNECT:
+                device.role = Device.Role.INTERCONNECT
+                device.save(update_fields=['role'])
+            new_version = device.snapshot(request.user)
+        messages.success(request, f'Pin mapping saved ({len(dict.fromkeys(pairs))} pins).' + (f' Device is now v{device.version}.' if new_version else ''))
+        return redirect(device)
+    return render(request, 'devices/pin_mapping.html', {
+        'device': device, 'connectors': connectors,
+        'maps': device.pin_maps.select_related('from_pin__connector', 'to_pin__connector'),
+    })

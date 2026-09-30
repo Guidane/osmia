@@ -20,15 +20,16 @@ h2 { font-size: 16px; margin: 24px 0 12px; }
 .muted { color: var(--muted); }
 
 /* Top bar */
-.topbar { display: flex; align-items: center; gap: 16px; background: var(--brand); color: #fff; padding: 0 16px; height: 48px; flex-wrap: wrap; }
+/* Grows to more rows on a narrow window instead of spilling over the page. */
+.topbar { display: flex; align-items: center; column-gap: 16px; row-gap: 4px; background: var(--brand); color: #fff; padding: 6px 16px; min-height: 48px; flex-wrap: wrap; }
 .topbar a, .topbar button.link { color: #fff; }
 .brand { font-weight: 700; font-size: 16px; }
 .module-title { font-weight: 600; opacity: .95; }
-.module-menu { display: flex; gap: 4px; }
+.module-menu { display: flex; flex-wrap: wrap; gap: 4px; }
 .module-menu a { padding: 6px 10px; border-radius: var(--radius); }
 .module-menu a.active, .module-menu a:hover { background: var(--brand-dark); text-decoration: none; }
 .spacer { flex: 1; }
-.module-switcher { display: flex; gap: 2px; }
+.module-switcher { display: flex; flex-wrap: wrap; gap: 2px; }
 .module-switcher a { font-size: 18px; padding: 4px 6px; border-radius: var(--radius); }
 .module-switcher a.active, .module-switcher a:hover { background: var(--brand-dark); text-decoration: none; }
 .topbar form { margin: 0; }
@@ -319,3 +320,16 @@ table[data-select] tbody tr.selected td { background: #f3ecf1; }
 .chain-id { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11px; }
 .history-link { font-size: 12px; margin-left: 4px; }
 .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin: 12px 0; }
+
+/* Devices: signals, pin tables, pin mapping */
+.card.narrow-wide { max-width: 860px; }
+.pin-table th a { color: inherit; }
+.pin-table th a.sorted::after { content: " ▾"; }
+.map-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; }
+
+/* Narrow windows: the bar wraps, and the module switcher gets a row of its own. */
+@media (max-width: 900px) {
+  .topbar .spacer { display: none; }
+  .module-switcher { order: 10; width: 100%; }
+  .module-switcher a { font-size: 16px; }
+}

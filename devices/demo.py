@@ -3,17 +3,27 @@ from django.contrib.auth import get_user_model
 from assemblies.models import Assembly, AssemblyComponent
 from inventory.models import Part
 
-from .models import Connector, Device, Pin
+from .models import Connector, Device, Pin, Signal
 
 
 def _pins(connector, rows):
-    """rows: (label, signal)."""
-    for i, (label, signal) in enumerate(rows, start=1):
-        Pin.objects.create(connector=connector, position=i, label=label, signal=signal)
+    """rows: (label, signal[, tag[, set number, set type]])."""
+    for i, (label, signal, *more) in enumerate(rows, start=1):
+        tag = more[0] if more else ''
+        set_number, set_type = (more[1], more[2]) if len(more) > 2 else (None, '')
+        Pin.objects.create(connector=connector, position=i, label=label, signal=signal, tag=tag,
+                           set_number=set_number, set_type=set_type)
+
+
+def _signals():
+    """The shared signal list gets every signal the demo pins use."""
+    for name in sorted(set(Pin.objects.exclude(signal='').values_list('signal', flat=True))):
+        Signal.objects.get_or_create(name=name)
 
 
 def load():
     if Device.objects.exists():
+        _signals()
         return
     parts = {p.part_number: p for p in Part.objects.all()}
     users = {u.username: u for u in get_user_model().objects.all()}
@@ -33,10 +43,11 @@ def load():
     )
     j01 = Connector.objects.create(device=pdu, designator='J01', side='left', position=1,
                                    part=parts.get('DB25-F'), description='Power in')
-    _pins(j01, [('1', 'PWR'), ('13', 'GND'), ('2', 'PWR'), ('14', 'GND')])
+    _pins(j01, [('1', 'PWR', 'PWR_IN+'), ('13', 'GND', 'PWR_IN-'), ('2', 'PWR', 'PWR_AUX+'), ('14', 'GND', 'PWR_AUX-')])
     j02 = Connector.objects.create(device=pdu, designator='J02', side='right', position=2,
                                    part=parts.get('DB25-F'), description='Control bus')
-    _pins(j02, [('1', 'CAN_H'), ('2', 'CAN_L'), ('3', 'GND')])
+    _pins(j02, [('1', 'CAN_H', 'CAN1_H', 1, 'twisted_shielded'), ('2', 'CAN_L', 'CAN1_L', 1, 'twisted_shielded'),
+                ('3', 'GND', 'CAN1_GND')])
     pdu.snapshot()
 
     # Test equipment we build to test the units.
@@ -64,3 +75,4 @@ def load():
     inp = Connector.objects.create(device=load_dev, designator='J01', side='left', position=1, description='Load input')
     _pins(inp, [('+', 'PWR'), ('-', 'GND')])
     load_dev.snapshot()
+    _signals()

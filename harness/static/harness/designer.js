@@ -33,6 +33,15 @@ function viewportSize() {
   return { w: canvasWrap.clientWidth || 1000, h: canvasWrap.clientHeight || 700 };
 }
 
+// Osmia's top bar gets taller when it wraps on a narrow window; the designer
+// fills whatever height is left below it.
+function fitBelowTopBar() {
+  const bar = document.querySelector(".topbar");
+  document.documentElement.style.setProperty("--osmia-bar-height", `${(bar && bar.offsetHeight) || 48}px`);
+}
+fitBelowTopBar();
+window.addEventListener("resize", fitBelowTopBar);
+
 // The canvas fills the visible area (sharp on high-DPI screens).
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -120,6 +129,7 @@ function applyViewDecorations() {
   const level = document.getElementById("zoom-level");
   if (level) level.textContent = `${Math.round(view.scale * 100)}%`;
   positionPinoutHint();
+  if (typeof positionConnectorTip === "function") positionConnectorTip();
 }
 
 if (window.ResizeObserver) new ResizeObserver(() => { resizeCanvas(); render(); }).observe(canvasWrap);
@@ -145,12 +155,15 @@ const BOX_WIDTH = 170;
 const CONN_W = 18;
 const CONN_H = 66;
 
-const WIRE_TYPES = [
-  ["none", "None"],
-  ["twisted", "Twisted"],
-  ["shielded", "Shielded"],
-  ["twisted_shielded", "Twisted + Shielded"],
-];
+// A pin's cable set (defined on the device in the Devices module).
+const SET_TYPES = { straight: "Straight", twisted: "Twisted", shielded: "Shielded", twisted_shielded: "Twisted shielded" };
+
+// Swatches for the common wire colours; anything else is shown as typed.
+const WIRE_COLORS = {
+  black: "#111", red: "#d32f2f", blue: "#1e63d0", green: "#2e8b57", yellow: "#f2c200", white: "#fff",
+  brown: "#7b4b2a", orange: "#f28c28", violet: "#7e57c2", purple: "#7e57c2", grey: "#8a8a8a", gray: "#8a8a8a",
+  pink: "#f48fb1", "green/yellow": "linear-gradient(90deg, #2e8b57 50%, #f2c200 50%)",
+};
 
 function genId() {
   return Math.random().toString(36).slice(2, 10);
@@ -314,6 +327,108 @@ function getHarness(harnessId) {
 
 function getConnector(device, connectorId) {
   return device.connectors.find(c => c.id === connectorId);
+}
+
+function pinOf(instanceId, connectorId, pinId) {
+  const inst = getInstance(instanceId);
+  const device = inst && state.devices[inst.device_id];
+  const connector = device && getConnector(device, connectorId);
+  return (connector && connector.pins.find(p => p.id === pinId)) || null;
+}
+
+function isInterconnect(device) {
+  return !!device && device.role === "interconnect";
+}
+
+// The pins wired to this pin, anywhere in the project: [{instanceId, connectorId, pinId}].
+function wiredTo(instanceId, connectorId, pinId) {
+  const ends = [];
+  for (const harness of state.project.harnesses) {
+    for (const branch of harness.branches) {
+      const from = fromEndOf(harness, branch);
+      for (const conn of branch.connections) {
+        const a = { instanceId: from.instanceId, connectorId: from.connectorId, pinId: conn.from_pin };
+        const b = { instanceId: branch.to_instance, connectorId: branch.to_connector, pinId: conn.to_pin };
+        const isA = a.instanceId === instanceId && a.connectorId === connectorId && a.pinId === pinId;
+        const isB = b.instanceId === instanceId && b.connectorId === connectorId && b.pinId === pinId;
+        if (isA) ends.push(b);
+        if (isB) ends.push(a);
+      }
+    }
+  }
+  return ends;
+}
+
+// On an interconnect: the pins this one is passed through to (both directions).
+function mappedPins(device, connectorId, pinId) {
+  const out = [];
+  for (const [c1, p1, c2, p2] of device.pin_map || []) {
+    if (c1 === connectorId && p1 === pinId) out.push({ connectorId: c2, pinId: p2 });
+    if (c2 === connectorId && p2 === pinId) out.push({ connectorId: c1, pinId: p1 });
+  }
+  return out;
+}
+
+// The tag to show for a pin. A unit's pins have their own tag. An
+// interconnect's pins take the tag of the unit on the other side of it:
+// follow the pin map through, then the wire out, then (for chained
+// interconnects) on again. Returns {tag, inherited, from} or null.
+function effectiveTag(instanceId, connectorId, pinId, seen = new Set()) {
+  const key = pinKey(instanceId, connectorId, pinId);
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const inst = getInstance(instanceId);
+  const device = inst && state.devices[inst.device_id];
+  const pin = pinOf(instanceId, connectorId, pinId);
+  if (!pin) return null;
+  if (!isInterconnect(device)) return pin.tag ? { tag: pin.tag, inherited: false } : null;
+  for (const through of mappedPins(device, connectorId, pinId)) {
+    seen.add(pinKey(instanceId, through.connectorId, through.pinId));
+    for (const far of wiredTo(instanceId, through.connectorId, through.pinId)) {
+      const found = effectiveTag(far.instanceId, far.connectorId, far.pinId, seen);
+      if (found) {
+        const farInst = getInstance(far.instanceId);
+        const farPin = pinOf(far.instanceId, far.connectorId, far.pinId);
+        const from = found.from || `${farInst.label || state.devices[farInst.device_id].name} ${far.connectorId}.${farPin ? farPin.label : far.pinId}`;
+        return { tag: found.tag, inherited: true, from };
+      }
+    }
+  }
+  return pin.tag ? { tag: pin.tag, inherited: false } : null;
+}
+
+function tagCell(ctx, pinId) {
+  const td = document.createElement("td");
+  td.className = "tag-cell";
+  const found = effectiveTag(ctx.instanceId, ctx.connectorId, pinId);
+  if (found) {
+    td.textContent = (found.inherited ? "↪ " : "") + found.tag;
+    if (found.inherited) {
+      td.classList.add("inherited");
+      td.title = `Taken from ${found.from}, through the interconnect`;
+    }
+  }
+  return td;
+}
+
+function setText(pin) {
+  if (!pin || !(pin.set || pin.set_type)) return "";
+  return [pin.set, SET_TYPES[pin.set_type]].filter(Boolean).join(" · ");
+}
+
+// A wire's set: the pins' cable set, one text if both ends agree.
+function wireSetText(fromPin, toPin) {
+  const a = setText(fromPin), b = setText(toPin);
+  if (a && b && a !== b) return `${a} / ${b}`;
+  return a || b || "—";
+}
+
+function colorSwatch(name) {
+  const css = WIRE_COLORS[String(name || "").trim().toLowerCase()];
+  const span = document.createElement("span");
+  span.className = "wire-swatch" + (css ? "" : " unknown");
+  if (css) span.style.background = css;
+  return span;
 }
 
 // A harness has ONE trunk connector (from_instance/from_connector) and one or
@@ -558,7 +673,9 @@ function drawInstance(inst, selected) {
   ctx.strokeStyle = selected ? "#3b7dd8" : "#333";
   ctx.lineWidth = selected ? 3 : 1.5;
   ctx.fillRect(inst.x, inst.y, width, height);
+  if (isInterconnect(device)) ctx.setLineDash([6, 4]);  // passes signals through
   ctx.strokeRect(inst.x, inst.y, width, height);
+  ctx.setLineDash([]);
 
   ctx.fillStyle = device.color || "#3b7dd8";
   ctx.fillRect(inst.x, inst.y, width, BOX_HEADER);
@@ -566,7 +683,7 @@ function drawInstance(inst, selected) {
   ctx.fillStyle = "#fff";
   ctx.font = "12px sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(inst.label || device.name, inst.x + width / 2, inst.y + 17);
+  ctx.fillText((isInterconnect(device) ? "⇄ " : "") + (inst.label || device.name), inst.x + width / 2, inst.y + 17);
   ctx.textAlign = "left";
 
   for (const connector of device.connectors) {
@@ -751,13 +868,83 @@ function mousePosFromEvent(e) {
   return toWorld(s.x, s.y);
 }
 
-// Shows a "Loop Back this connector instead" button whenever a connector is
-// pending — an alternative to clicking a second connector on the canvas, so
-// looping pins back to each other doesn't need a placeholder device.
+// A tip next to a clicked (pending) connector: loop it back, create an
+// extension for it, or click another connector to wire the two.
 function updateLoopbackButton() {
-  const btn = document.getElementById("btn-loopback-pending");
-  btn.classList.toggle("hidden", !state.pendingConnectorFrom);
+  const tip = document.getElementById("connector-tip");
+  const from = state.pendingConnectorFrom;
+  tip.classList.toggle("hidden", !from);
+  if (!from) return;
+  const inst = getInstance(from.instance_id);
+  const device = inst && state.devices[inst.device_id];
+  document.getElementById("connector-tip-title").textContent = device ? `${inst.label || device.name} ${from.connector_id}` : from.connector_id;
+  positionConnectorTip();
 }
+
+function positionConnectorTip() {
+  const tip = document.getElementById("connector-tip");
+  const from = state.pendingConnectorFrom;
+  if (!tip || !from || tip.classList.contains("hidden")) return;
+  const inst = getInstance(from.instance_id);
+  const device = inst && state.devices[inst.device_id];
+  const pos = device && connectorSquarePosition(inst, device, from.connector_id);
+  if (!pos) return;
+  const s = toScreen(pos.x + (pos.side === "left" ? -CONN_W : CONN_W), pos.y + CONN_H / 2 + 6);
+  tip.style.top = `${Math.round(s.y)}px`;
+  // Open away from the device: to the right of a right-side connector, to the left of a left-side one.
+  if (pos.side === "left") { tip.style.left = ""; tip.style.right = `${Math.round(canvasWrap.clientWidth - s.x)}px`; }
+  else { tip.style.right = ""; tip.style.left = `${Math.round(s.x)}px`; }
+}
+
+// "Create extension": a new interconnect device (made in Devices) with this
+// connector's exact pinout on its J02, placed beside the device, and a harness
+// from the connector to its J01 with a wire per pin.
+async function createExtension() {
+  const from = state.pendingConnectorFrom;
+  if (!from) return;
+  const inst = getInstance(from.instance_id);
+  const device = state.devices[inst.device_id];
+  const connector = getConnector(device, from.connector_id);
+  state.pendingConnectorFrom = null;
+  updateLoopbackButton();
+  setStatus("Creating the extension…");
+  const res = await api("/api/extensions", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: device.id, connector_id: connector.id }),
+  });
+  const ext = await res.json().catch(() => null);
+  if (!res.ok || !ext || !ext.connectors) { setStatus((ext && ext.error) || "Couldn't create the extension"); render(); return; }
+  state.devices[ext.id] = ext;
+  loadDeviceLibrary();  // the new device shows up in "Place device" too
+
+  const pos = connectorSquarePosition(inst, device, connector.id);
+  const size = deviceBoxSize(ext);
+  const gap = 140;
+  const input = ext.connectors.find(c => c.id === "J01") || ext.connectors[0];
+  const inputIdx = connectorsOnSide(ext, input.side).findIndex(c => c.id === input.id);
+  const x = pos.side === "left" ? inst.x - gap - size.width : inst.x + deviceBoxSize(device).width + gap;
+  const y = pos.y - (BOX_HEADER + MARGIN_TOP + inputIdx * ROW_H + ROW_H / 2);
+  const extInst = { instance_id: genId(), device_id: ext.id, device_version: ext.version, x, y, label: "" };
+  state.project.instances.push(extInst);
+
+  // One wire per pin that isn't wired yet; the extension's J01 pins have the same ids.
+  const used = usedPinKeys();
+  const toConn = { instance_id: extInst.instance_id, connector_id: input.id };
+  const target = resolveHarnessTarget(from, toConn);
+  const fromIsSource = target.effectiveFromConn.instance_id === from.instance_id;
+  const pairs = [];
+  for (const pin of connector.pins) {
+    if (used.has(pinKey(from.instance_id, connector.id, pin.id))) continue;
+    const twin = input.pins.find(p => p.id === pin.id);
+    if (twin) pairs.push(fromIsSource ? [pin, twin] : [twin, pin]);
+  }
+  const harness = commitBranch(target.existingHarness, target.effectiveFromConn, target.effectiveToConn, pairs, target.reroot);
+  selectHarness(harness.id);
+  renderHarnessList();
+  render();
+  setStatus(`Added ${ext.name} (${pairs.length} wires). Save the project to keep it.`);
+}
+document.getElementById("btn-create-extension").onclick = () => createExtension();
 
 document.getElementById("btn-loopback-pending").onclick = () => {
   const from = state.pendingConnectorFrom;
@@ -770,7 +957,10 @@ document.getElementById("btn-loopback-pending").onclick = () => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (connectModal && !connectModal.classList.contains("hidden")) {
+    const orderBox = document.getElementById("order-modal");
+    if (orderBox && !orderBox.classList.contains("hidden")) {
+      orderBox.classList.add("hidden");
+    } else if (connectModal && !connectModal.classList.contains("hidden")) {
       closeConnectModal();
     } else if (state.pinoutOpen) {
       closePinout();
@@ -932,7 +1122,7 @@ function makeConnection(fromPin, toPin) {
     id: genId(),
     from_pin: fromPin.id,
     to_pin: toPin.id,
-    wire_type: "none", // none | twisted | shielded | twisted_shielded
+    color: "",  // wire colour, e.g. "Red"; the set comes from the pins (Devices)
     awg: "",
     length: "",
     from_verified: false, // confirmed by the from-side device's responsible user
@@ -1104,7 +1294,7 @@ function updateCreateConnectButton() {
 }
 
 function pinOptionLabel(pin) {
-  return pin.signal ? `${pin.label} · ${pin.signal}` : pin.label;
+  return [pin.label, pin.tag, pin.signal].filter(Boolean).join(" · ");
 }
 
 function pickPinSelect(options, value, onChange) {
@@ -1550,13 +1740,13 @@ function renderDrawer() {
     headerTr.className = "branch-header-row";
 
     const leadTd = document.createElement("td");
-    leadTd.colSpan = 2; // Owner(from), Verify(from)
+    leadTd.colSpan = 3; // Owner(from), Verify(from), Tag(from)
     headerTr.appendChild(leadTd);
 
     const fromHeadTd = document.createElement("td");
     fromHeadTd.className = "sub-header-cell";
     if (fromHeaderText !== lastFromHeaderText || isLoopback) {
-      fromHeadTd.innerHTML = `<strong>${escapeHtml(fromHeaderText)}</strong>${connectorPartHtml(rowFromConnector)}`;
+      fromHeadTd.innerHTML = `<span class="end-name">${escapeHtml(fromHeaderText)}</span>${connectorPartHtml(rowFromConnector)}`;
       lastFromHeaderText = fromHeaderText;
     }
     headerTr.appendChild(fromHeadTd);
@@ -1564,11 +1754,11 @@ function renderDrawer() {
     const toHeadTd = document.createElement("td");
     toHeadTd.className = "sub-header-cell";
     // Every destination is its own connector (even when two units share a name), so it's always labelled.
-    toHeadTd.innerHTML = `<strong>${escapeHtml(toHeaderText)}</strong>${isLoopback ? "" : connectorPartHtml(toConnector)}`;
+    toHeadTd.innerHTML = `<span class="end-name">${escapeHtml(toHeaderText)}</span>${isLoopback ? "" : connectorPartHtml(toConnector)}`;
     headerTr.appendChild(toHeadTd);
 
     const trailTd = document.createElement("td");
-    trailTd.colSpan = 5; // Verify(to), Owner(to), Wire type, AWG, Length
+    trailTd.colSpan = 7; // Tag(to), Verify(to), Owner(to), Set, Color, AWG, Length
     headerTr.appendChild(trailTd);
 
     const headerActionTd = document.createElement("td");
@@ -1602,23 +1792,26 @@ function renderDrawer() {
       tdFromVerify.appendChild(fromVerifyInput);
       tr.appendChild(merge(tdFromVerify));
 
-      tr.appendChild(pinSelectCell(rowFromConnector, rowFromCtx, conn.from_pin, usedKeys, (v) => { conn.from_pin = v; }));
+      tr.appendChild(tagCell(rowFromCtx, conn.from_pin));
+      tr.appendChild(pinSelectCell(rowFromConnector, rowFromCtx, conn.from_pin, usedKeys, (v) => { conn.from_pin = v; renderDrawer(); }));
 
       let loopSecondRow = null;
       if (isLoopback) {
         // The other side (where the far connector's pins would go) just says
         // "loop back", merged over the wire's two rows.
         const tdLoop = document.createElement("td");
-        tdLoop.colSpan = 3; // Pin(to), Verify(to), Owner(to)
+        tdLoop.colSpan = 4; // Pin(to), Tag(to), Verify(to), Owner(to)
         tdLoop.rowSpan = 2;
         tdLoop.className = "loop-indicator-cell";
         tdLoop.textContent = "↻ Loop back";
         tr.appendChild(tdLoop);
         loopSecondRow = document.createElement("tr");
         loopSecondRow.className = "loop-second-pin";
-        loopSecondRow.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
+        loopSecondRow.appendChild(tagCell(toCtx, conn.to_pin));
+        loopSecondRow.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; renderDrawer(); }));
       } else {
-        tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; }));
+        tr.appendChild(pinSelectCell(toConnector, toCtx, conn.to_pin, usedKeys, (v) => { conn.to_pin = v; renderDrawer(); }));
+        tr.appendChild(tagCell(toCtx, conn.to_pin));
 
         const tdToVerify = document.createElement("td");
         const toVerifyInput = document.createElement("input");
@@ -1635,13 +1828,28 @@ function renderDrawer() {
         tr.appendChild(tdToOwner);
       }
 
-      const tdType = document.createElement("td");
-      const typeSelect = document.createElement("select");
-      for (const [value, label] of WIRE_TYPES) typeSelect.appendChild(new Option(label, value));
-      typeSelect.value = conn.wire_type || "none";
-      typeSelect.onchange = () => { conn.wire_type = typeSelect.value; };
-      tdType.appendChild(typeSelect);
-      tr.appendChild(merge(tdType));
+      const tdSet = document.createElement("td");
+      tdSet.className = "set-cell";
+      tdSet.textContent = wireSetText(pinOf(rowFromCtx.instanceId, rowFromCtx.connectorId, conn.from_pin),
+                                      pinOf(toCtx.instanceId, toCtx.connectorId, conn.to_pin));
+      tr.appendChild(merge(tdSet));
+
+      const tdColor = document.createElement("td");
+      tdColor.className = "color-cell";
+      const swatch = colorSwatch(conn.color);
+      const colorInput = document.createElement("input");
+      colorInput.type = "text";
+      colorInput.setAttribute("list", "wire-colors");
+      colorInput.placeholder = "e.g. Red";
+      colorInput.value = conn.color || "";
+      colorInput.oninput = () => {
+        conn.color = colorInput.value;
+        const next = colorSwatch(conn.color);
+        swatch.className = next.className;
+        swatch.style.background = next.style.background;
+      };
+      tdColor.append(swatch, colorInput);
+      tr.appendChild(merge(tdColor));
 
       const tdAwg = document.createElement("td");
       const awgInput = document.createElement("input");
@@ -1690,7 +1898,7 @@ function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
     if (isUsedElsewhere) continue;
     const opt = document.createElement("option");
     opt.value = pin.id;
-    opt.textContent = pin.signal ? `${pin.label} (${pin.signal})` : pin.label;
+    opt.textContent = pin.signal ? `${pin.label} (${pin.signal})` : pin.label;  // the tag has its own column
     if (pin.id === selectedPinId) opt.selected = true;
     select.appendChild(opt);
   }
@@ -1705,7 +1913,7 @@ function pinSelectCell(connector, ctx, selectedPinId, usedKeys, onChange) {
 // the Part page in Osmia) and type, e.g. "DB25-F · D-sub 25 (female)".
 function connectorPartHtml(connector) {
   const part = connector && connector.part;
-  if (!part) return "";
+  if (!part) return connector && connector.details ? `<div class="conn-part">${escapeHtml(connector.details)}</div>` : "";
   const type = part.type && part.type !== part.part_number ? ` · ${escapeHtml(part.type)}` : "";
   return `<div class="conn-part"><a href="${escapeHtml(part.url)}" target="_blank" title="Open ${escapeHtml(part.part_number)} in Osmia">${escapeHtml(part.part_number)}</a>${type}</div>`;
 }
@@ -1732,7 +1940,7 @@ const CSV_COLUMNS = [
   "Harness", "Destination", "Loopback",
   "From device", "From connector", "From connector part", "From connector type", "From mating connector", "From pin", "From signal", "From owner", "From verified",
   "To device", "To connector", "To connector part", "To connector type", "To mating connector", "To pin", "To signal", "To owner", "To verified",
-  "Wire type", "AWG", "Length",
+  "From tag", "To tag", "Set", "Wire color", "AWG", "Length",
 ];
 
 function harnessCsvRows(harness) {
@@ -1741,7 +1949,6 @@ function harnessCsvRows(harness) {
   const fromConnector = getConnector(fromDevice, harness.from_connector);
   const fromName = fromInst.label || fromDevice.name;
   const pinDef = (connector, pinId) => (connector && connector.pins.find(p => p.id === pinId)) || null;
-  const wireTypeLabel = value => (WIRE_TYPES.find(([v]) => v === (value || "none")) || [null, value])[1];
   const yesNo = value => (value ? "yes" : "no");
   const partNumber = connector => (connector && connector.part ? connector.part.part_number : "");
   const partType = connector => (connector && connector.part ? connector.part.type : "");
@@ -1760,6 +1967,11 @@ function harnessCsvRows(harness) {
     const endPlug = isLoopback ? branch.to_harness_connector : harness.from_harness_connector;
     const endDevice = isLoopback ? toDevice : fromDevice;
 
+    const endCtx = isLoopback
+      ? { instanceId: branch.to_instance, connectorId: branch.to_connector }
+      : { instanceId: harness.from_instance, connectorId: harness.from_connector };
+    const toCtx = { instanceId: branch.to_instance, connectorId: branch.to_connector };
+    const tagOf = (c, pinId) => { const t = effectiveTag(c.instanceId, c.connectorId, pinId); return t ? t.tag : ""; };
     for (const conn of branch.connections) {
       const fp = pinDef(endConnector, conn.from_pin);
       const tp = pinDef(toConnector, conn.to_pin);
@@ -1772,7 +1984,8 @@ function harnessCsvRows(harness) {
         isLoopback ? endPlug || "" : branch.to_harness_connector || "",
         tp ? tp.label : conn.to_pin, tp ? tp.signal : "",
         userName(toDevice.responsible_user_id), yesNo(isLoopback ? conn.from_verified : conn.to_verified),
-        wireTypeLabel(conn.wire_type), conn.awg || "", conn.length || "",
+        tagOf(endCtx, conn.from_pin), tagOf(toCtx, conn.to_pin),
+        wireSetText(fp, tp) === "—" ? "" : wireSetText(fp, tp), conn.color || "", conn.awg || "", conn.length || "",
       ]);
     }
   });
@@ -1810,6 +2023,124 @@ document.getElementById("btn-export-csv").onclick = () => {
   downloadText(`${safe(projectName)} - ${safe(harness.label || "Harness")}.csv`, toCsv([CSV_COLUMNS, ...rows]), "text/csv;charset=utf-8");
   setStatus(`Exported ${rows.length} wire${rows.length === 1 ? "" : "s"} from ${harness.label || "harness"}`);
 };
+
+// ---------- Order parts ----------
+// A harness needs a plug at each connector it goes to. "Order parts" lists
+// those ends with a part for each (remembered on the harness, suggesting the
+// device connector's own part until one is picked) and makes a draft order in
+// Osmia's Orders module.
+
+let partsLoaded = false;
+async function loadParts() {
+  if (partsLoaded) return;
+  const res = await api("/api/parts");
+  if (!res.ok) return;
+  const { parts } = await res.json();
+  const list = document.getElementById("part-list");
+  list.innerHTML = "";
+  for (const p of parts) {
+    const opt = document.createElement("option");
+    opt.value = p.part_number;
+    opt.label = p.name || p.part_number;
+    list.appendChild(opt);
+  }
+  partsLoaded = true;
+}
+
+// One entry per connector the harness plugs into: the trunk, each destination,
+// and loops on connectors that aren't already an end (a loop on the trunk or a
+// destination shares that plug).
+function harnessEnds(harness) {
+  const ends = [];
+  const seen = new Set();
+  const add = (instanceId, connectorId, plug, holder, key) => {
+    const k = `${instanceId}::${connectorId}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    const inst = getInstance(instanceId);
+    const device = inst && state.devices[inst.device_id];
+    if (!device) return;
+    const connector = getConnector(device, connectorId);
+    ends.push({
+      name: `${inst.label || device.name}.${connectorId}`, plug: plug || "", holder, key,
+      suggested: connector && connector.part ? connector.part.part_number : "",
+    });
+  };
+  add(harness.from_instance, harness.from_connector, harness.from_harness_connector, harness, "from_plug_part");
+  for (const b of harness.branches) if (!isLoopBranch(harness, b)) add(b.to_instance, b.to_connector, b.to_harness_connector, b, "to_plug_part");
+  for (const b of harness.branches) if (isLoopBranch(harness, b)) add(b.to_instance, b.to_connector, b.to_harness_connector, b, "to_plug_part");
+  return ends;
+}
+
+const orderModal = document.getElementById("order-modal");
+let orderEnds = [];
+
+function openOrderModal() {
+  const harness = getHarness(state.selectedHarness);
+  if (!harness) return;
+  loadParts();
+  orderEnds = harnessEnds(harness);
+  document.getElementById("order-modal-title").textContent = `Order parts for ${harness.label || "harness"}`;
+  const body = document.getElementById("order-rows");
+  body.innerHTML = "";
+  for (const end of orderEnds) {
+    const tr = document.createElement("tr");
+    const nameTd = document.createElement("td");
+    nameTd.textContent = end.name;
+    const plugTd = document.createElement("td");
+    plugTd.textContent = end.plug || "—";
+    const partTd = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("list", "part-list");
+    input.placeholder = "Part number";
+    input.value = end.holder[end.key] || end.suggested;
+    if (!end.holder[end.key] && end.suggested) {
+      input.classList.add("suggested");
+      input.title = "The device connector's own part; the plug that mates with it may be a different part.";
+    }
+    input.oninput = () => input.classList.remove("suggested");
+    end.input = input;
+    partTd.appendChild(input);
+    const qtyTd = document.createElement("td");
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.value = "1";
+    qty.className = "qty";
+    end.qty = qty;
+    qtyTd.appendChild(qty);
+    tr.append(nameTd, plugTd, partTd, qtyTd);
+    body.appendChild(tr);
+  }
+  orderModal.classList.remove("hidden");
+}
+
+async function createOrder() {
+  const harness = getHarness(state.selectedHarness);
+  if (!harness) return;
+  const lines = [];
+  for (const end of orderEnds) {
+    const number = end.input.value.trim();
+    end.holder[end.key] = number;  // remembered for next time (saved with the project)
+    if (number) lines.push({ part_number: number, quantity: parseInt(end.qty.value, 10) || 1 });
+  }
+  if (!lines.length) { setStatus("Pick a part for at least one plug"); return; }
+  const projectName = document.getElementById("project-name").value || state.project.name || "harness project";
+  const res = await api("/api/order", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines, note: `Parts for harness ${harness.label || ""} in ${projectName}.` }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { setStatus(data.error || "Couldn't create the order"); return; }
+  orderModal.classList.add("hidden");
+  window.open(data.url, "_blank");
+  setStatus(`Draft order ${data.number} created` + (data.missing && data.missing.length ? ` (not in Inventory: ${data.missing.join(", ")})` : ""));
+}
+
+document.getElementById("btn-order-parts").onclick = openOrderModal;
+document.getElementById("btn-cancel-order").onclick = () => orderModal.classList.add("hidden");
+document.getElementById("btn-create-order").onclick = () => createOrder();
 
 // ---------- Device library ----------
 

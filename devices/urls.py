@@ -11,5 +11,8 @@ urlpatterns = [
     path('<int:device_pk>/connectors/new/', views.connector_form, name='connector_create'),
     path('<int:device_pk>/connectors/<int:pk>/', views.connector_form, name='connector_edit'),
     path('<int:device_pk>/connectors/<int:pk>/delete/', views.connector_delete, name='connector_delete'),
+    path('<int:device_pk>/connectors/<int:pk>/clone/', views.connector_clone, name='connector_clone'),
+    path('<int:pk>/mapping/', views.pin_mapping, name='pin_mapping'),
+    path('signals/', views.signals, name='signals'),
     path('from-assembly/<int:assembly_pk>/', views.device_from_assembly, name='from_assembly'),
 ]

@@ -1,7 +1,52 @@
 # Osmia
 
 A modular business app for companies that build and test electrical equipment, built on Django in the spirit of Odoo: separate modules
-(Departments, Users, Tasks, Inventory, Assemblies, Budgets, Devices, Harness) that plug into a shared core and extend each other.
+(Departments, Users, Tasks, Inventory, Orders, Assemblies, Budgets, Devices, Harness, Automations, Audit) that plug into a shared core and extend each other.
+
+## Updating to a new version
+
+Your data lives in `db.sqlite3` (the database) and `media/` (uploaded images). Neither is part of the code, so updating leaves them in place, but back them up first: a new version can change the database, and that can't be undone without the backup.
+
+Stop the server (Ctrl+C), then in the Osmia folder:
+
+```powershell
+# 1. Back up the database and the images
+$stamp = Get-Date -Format yyyyMMdd-HHmm
+New-Item -ItemType Directory -Force backups | Out-Null
+Copy-Item db.sqlite3 "backups\db-$stamp.sqlite3"
+if (Test-Path media) { Copy-Item media "backups\media-$stamp" -Recurse }
+
+# 2. Get the new version
+git pull
+
+# 3. Install any new or updated requirements
+.\.venv\Scripts\python -m pip install -r requirements.txt
+
+# 4. Update the database to the new version (keeps your data)
+.\.venv\Scripts\python manage.py migrate
+
+# 5. Check that everything is in order, then start again
+.\.venv\Scripts\python manage.py check
+.\.venv\Scripts\python manage.py runserver
+```
+
+- `git pull` needs Osmia to have been set up with `git clone https://github.com/Guidane/osmia.git`. If you downloaded a ZIP instead, unpack the new version over the old folder, keeping your `db.sqlite3`, `media/` and `.venv/`.
+- If `git pull` complains about local changes, you edited Osmia's files yourself. Run `git stash`, then `git pull`, then `git stash pop` to put your changes back, or ask whoever made them.
+- `migrate` prints each database change it applies; "No migrations to apply" means the new version didn't need any.
+- Don't run `load_demo` on a database you use for real work; it adds demo users, parts and rules.
+- Settings such as `OSMIA_SECRET_KEY`, `OSMIA_DEBUG` and `OSMIA_ALLOWED_HOSTS` come from environment variables, so an update doesn't touch them.
+- A browser may keep the old styles for a moment; reload with Ctrl+F5 if a page looks off.
+
+**Going back** if something is wrong after an update: stop the server, put the backup back, and return to the previous code.
+
+```powershell
+git log --oneline -5              # find the version you had before
+git checkout <that-version>       # e.g. git checkout 43cb0f6
+Copy-Item backups\db-<stamp>.sqlite3 db.sqlite3 -Force
+.\.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Run `git checkout main` to return to the latest version later.
 
 ## Quick start (Windows PowerShell)
 
@@ -55,8 +100,8 @@ dependency is missing, startup stops with a clear error.
 - **Assemblies** (`assemblies`, depends on inventory and tasks): an assembly has a type (generic, device, harness or plate stack), a status, a version, and build and usage instructions. Its bill of materials lists parts and/or sub-assemblies. The **revision** goes up automatically when the components or version change, and circular nesting is blocked. The assembly page shows the fully expanded structure, the total parts needed against stock on hand ("stock covers N builds"), where the assembly is used, and its tasks. A task can be linked to an assembly from the task page, or created with **New build task**. The link is stored in this module, so Tasks doesn't depend on Assemblies.
 - **Budgets** (`budgets`, depends on users, departments and tasks): nested budgets (e.g. FY2026 > Operations > Warehouse Ops), each with a number, an amount and an optional department, as in Waggle V3. A task is charged to a budget of its own department, from the task page. Spending is whatever those tasks cost, collected from other modules through the `task_costs` hook. So far that means parts issued to the task, at the part's cost on the day of the move, plus the budget's placed and received orders (through `budget_costs`). Spending rolls up through sub-budgets. Pages show the amount, spent, remaining and a usage bar, and warn when a budget is overspent or its sub-budgets add up to more than it has.
 
-- **Devices** (`devices`, depends on users, inventory and assemblies): anything with connectors that takes part in an electrical setup. That covers units we build (a computer, an inverter, ...), test equipment we build to test them, and external equipment (power supplies, electronic loads, meters, ...). A device we build links to its assembly (type "Device") for the bill of materials. Each connector (J01, P01, ...) has a side, an optional physical connector part (its description is shown as the connector type in harnesses) and numbered pins, each with a label and a signal. Devices are created and edited **only here**: add connectors and assign or edit their pins (one at a time with **+ Add pin**, or several at once). Every change to a device's definition is kept as a new version, and an older version can be made current again.
-- **Harness** (`harness`, depends on users and devices): the Wire Harness Designer from the stand-alone harness app. Scroll to zoom and drag empty space to pan; projects open centred on their harnesses, and **⌖ Center** centres the view again. Pick a device from the **Place device** dropdown and click the canvas to place it. Then click one connector and another (or **Loop Back**) to wire them pin to pin: each wire's two pins are chosen in the connect popup, and **Match remaining pins by signal** can pair the rest. The **signal rules** (e.g. PWR ↔ PWR, RX ↔ TX) flag wires that aren't allowed. Each harness gets its mating plug (J01 ↔ P01). Click a wire and then **Show pinout** to open its wire table in a popup; it shows each connector's part number, linked to its Part page, and type. Wires carry wire type, AWG, length and verified flags, and the table exports to CSV. Projects are versioned like devices. The designer only reads Osmia's devices and users: it can't create or change a device. **Open in Devices ↗** and **+ New device ↗** open the Devices module, and the designer picks up the changes when you come back to it (or with ↻).
+- **Devices** (`devices`, depends on users, inventory and assemblies): anything with connectors that takes part in an electrical setup. That covers units we build (a computer, an inverter, ...), test equipment we build to test them, and external equipment (power supplies, electronic loads, meters, ...). A device we build links to its assembly (type "Device") for the bill of materials. Each connector (J01, P01, ...) has a side, an optional physical connector part (its description is shown as the connector type in harnesses) and numbered pins, each with a label and a signal. Devices are created and edited **only here**: add connectors and assign or edit their pins (one at a time with **+ Add pin**, or several at once). Every change to a device's definition is kept as a new version, and an older version can be made current again. Pins have a **signal** from the shared list in **Devices › Signals** (the same for every device; renaming one renames it on every pin and in the harness signal rules), a **tag** (unique within the connector; the pin table sorts by tag or signal) and a cable **set**: a set number plus straight, twisted, shielded or twisted shielded. A connector has a **gender** (pin or socket), a part or, without one, a free-text **connector details**, and **pinout images**. **Clone** copies a connector with its pins. A device with the role **Interconnect** (adapter, breakout, extension) has a **pin mapping**: which input pin passes through to which output pin.
+- **Harness** (`harness`, depends on users and devices): the Wire Harness Designer from the stand-alone harness app. Scroll to zoom and drag empty space to pan; projects open centred on their harnesses, and **⌖ Center** centres the view again. Pick a device from the **Place device** dropdown and click the canvas to place it. Then click one connector and another (or **Loop Back**) to wire them pin to pin: each wire's two pins are chosen in the connect popup, and **Match remaining pins by signal** can pair the rest. The **signal rules** (e.g. PWR ↔ PWR, RX ↔ TX) flag wires that aren't allowed. Each harness gets its mating plug (J01 ↔ P01). Click a wire and then **Show pinout** to open its wire table in a popup; it shows each connector's part number, linked to its Part page, and type. Wires carry wire type, AWG, length and verified flags, and the table exports to CSV. Projects are versioned like devices. The designer only reads Osmia's devices and users: it can't create or change a device. **Open in Devices ↗** and **+ New device ↗** open the Devices module, and the designer picks up the changes when you come back to it (or with ↻). Clicking a connector shows a tip with **🔁 Loop back** and **➕ Create extension**: the extension is a new interconnect device (made in Devices) with exactly that connector's pinout, placed beside it with a harness in between. On an interconnect, mapped pins take the **tags** of the unit on the other side (shown as ↪ TAG in the pinout). The pinout shows each end's tag, the pins' **set** (from Devices) and a **wire colour**. **🧾 Order parts** lists a plug for each connector of the harness (remembering the part picked for it) and makes a draft order in Orders.
 - **Orders** (`orders`, depends on users, inventory and budgets): purchase orders (PO-0001, ...) from a supplier, charged to a budget, with lines of parts, quantities and unit prices. An order goes draft → placed → received (or cancelled); only drafts can be edited, and an order needs lines to be placed. Placed and received orders count as spending on their budget. **Receiving** an order books every line into stock once, at the order's price.
 - **Automations** (`automations`, depends on users): rules that do things by themselves. A rule is **When** (a trigger, e.g. "An order is placed") → **If** (optional conditions on the record, e.g. total is more than 500) → **Then** (steps, run in order). Steps are **Create tasks**, **Change a status** (of an order, task or assembly), **Notify people** (in-app, shown by the 🔔 in the top bar) and **Issue / receive stock**. Tasks a rule creates form a group, and **"All tasks created by a rule are done"** triggers a next rule, with `{source}` still pointing at the record the chain started from. The demo chains two rules this way: placing an order creates the check-in tasks, and finishing them receives the order into stock. If any step fails, the rule's other steps are undone (the change that triggered it stays), and the **Run log** shows what every rule did or why it failed. Rules can trigger rules at most 5 deep.
 

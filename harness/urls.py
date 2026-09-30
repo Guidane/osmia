@@ -14,4 +14,7 @@ urlpatterns = [
     path('api/projects/<int:pk>/versions/<int:version>/activate', views.api_project_activate),
     path('api/signal-rules', views.api_signal_rules, name='api_signal_rules'),
     path('api/users', views.api_users, name='api_users'),
+    path('api/extensions', views.api_extension, name='api_extension'),
+    path('api/parts', views.api_parts, name='api_parts'),
+    path('api/order', views.api_order, name='api_order'),
 ]

@@ -6,6 +6,7 @@
   <h1><span class="swatch" style="background: {{ d.color }}"></span> {{ d.name }}
     {% if d.part_number %}<span class="muted">· {{ d.part_number }}</span>{% endif %}
     <span class="badge">v{{ d.version }}</span></h1>
+  {% if d.is_interconnect %}<a class="btn" href="{% url 'devices:pin_mapping' d.pk %}">Pin mapping</a>{% endif %}
   <a class="btn" href="{% url 'devices:edit' d.pk %}">Edit device</a>
 </div>
 
@@ -31,25 +32,34 @@
     <section class="card panel">
       <div class="toolbar">
         <h2>{{ c.designator }}{% if c.description %} <span class="muted">· {{ c.description }}</span>{% endif %}</h2>
+        <form method="post" action="{% url 'devices:connector_clone' d.pk c.pk %}">{% csrf_token %}<button class="btn" title="A copy of this connector and its pins, as the next free connector">Clone</button></form>
         <a class="btn primary" href="{% url 'devices:connector_edit' d.pk c.pk %}">Edit pins</a>
       </div>
       <dl class="props connector-props">
         <dt>Connector part</dt>
-        <dd>{% if c.part %}<a href="{{ c.part.get_absolute_url }}">{{ c.part.part_number }}</a>{% if c.part.name %} <span class="muted">{{ c.part.name }}</span>{% endif %}{% else %}<span class="muted">not set</span>{% endif %}</dd>
+        <dd>{% if c.part %}<a href="{{ c.part.get_absolute_url }}">{{ c.part.part_number }}</a>{% if c.part.name %} <span class="muted">{{ c.part.name }}</span>{% endif %}{% elif c.details %}{{ c.details }}{% else %}<span class="muted">not set</span>{% endif %}</dd>
+        <dt>Gender</dt><dd>{{ c.get_gender_display|default:"—" }}</dd>
         <dt>Harness plug</dt><dd>{{ c.mating_designator }}</dd>
         <dt>Side in designer</dt><dd>{{ c.get_side_display }}</dd>
       </dl>
-      <table class="list">
-        <thead><tr><th class="num">#</th><th>Pin</th><th>Signal</th></tr></thead>
+      <table class="list pin-table">
+        <thead><tr>
+          <th><a href="?connector={{ c.pk }}" class="{% if not sort %}sorted{% endif %}">Pin</a></th>
+          <th><a href="?connector={{ c.pk }}&amp;sort=signal" class="{% if sort == 'signal' %}sorted{% endif %}">Signal</a></th>
+          <th><a href="?connector={{ c.pk }}&amp;sort=tag" class="{% if sort == 'tag' %}sorted{% endif %}" title="Sort by tag">Tag</a></th>
+          <th>Set</th><th>Set type</th>
+        </tr></thead>
         <tbody>
-        {% for p in c.pins.all %}
-          <tr><td class="num muted">{{ p.position }}</td><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td></tr>
+        {% for p in pins %}
+          <tr><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td><td>{% if p.tag %}<code>{{ p.tag }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td>{{ p.set_number|default:"—" }}</td><td>{{ p.get_set_type_display|default:"—" }}</td></tr>
         {% empty %}
-          <tr><td colspan="3" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>
+          <tr><td colspan="5" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>
         {% endfor %}
         </tbody>
       </table>
     </section>
+    {% image_gallery c title="Pinout images" empty="No images yet, e.g. a drawing or photo of the pinout." %}
     {% endwith %}
   {% else %}
     <section class="card panel">
@@ -69,6 +79,19 @@
     </section>
 
     {% image_gallery d %}
+
+    {% if d.is_interconnect %}
+    <section class="card panel">
+      <div class="toolbar"><h2>Pin mapping</h2><a class="btn small" href="{% url 'devices:pin_mapping' d.pk %}">Edit</a></div>
+      <p class="muted">Input pins pass through to output pins. In harnesses, mapped pins take the tags of the unit wired to the other side.</p>
+      {% if pin_maps %}
+      <table class="list compact">
+        <thead><tr><th>In</th><th></th><th>Out</th></tr></thead>
+        <tbody>{% for m in pin_maps %}<tr><td>{{ m.from_pin.connector.designator }}.{{ m.from_pin.label }}</td><td class="muted">→</td><td>{{ m.to_pin.connector.designator }}.{{ m.to_pin.label }}</td></tr>{% endfor %}</tbody>
+      </table>
+      {% else %}<p class="muted">Nothing mapped yet.</p>{% endif %}
+    </section>
+    {% endif %}
 
     <section class="card panel">
       <h2>Versions</h2>

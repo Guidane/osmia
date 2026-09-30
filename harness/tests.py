@@ -33,7 +33,7 @@ class HarnessApiTests(HarnessTestCase):
         pdu = next(d for d in devices if d['id'] == str(self.pdu.pk))
         self.assertEqual(pdu['version'], 1)
         self.assertEqual([c['id'] for c in pdu['connectors']], ['J01', 'J02'])
-        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR'}, pdu['connectors'][0]['pins'])
+        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR', 'tag': 'PWR_IN+', 'set': None, 'set_type': ''}, pdu['connectors'][0]['pins'])
 
     def test_harness_cannot_create_or_change_devices(self):
         before = (Device.objects.count(), self.pdu.version, list(self.pdu.connectors.values_list('designator', flat=True)))
@@ -151,3 +151,36 @@ class ImportTests(TestCase):
         project = HarnessProject.objects.get(name='Bench')
         self.assertEqual(project.data()['instances'][0]['device_id'], str(ecu.pk))
         self.assertEqual(SignalRule.pairs(), [['RX', 'TX']])
+
+
+class ExtensionAndOrderTests(HarnessTestCase):
+    def test_extension_api(self):
+        resp = self.post_json('/extensions', {'device_id': self.pdu.pk, 'connector_id': 'J02'})
+        ext = resp.json()
+        self.assertEqual(ext['role'], 'interconnect')
+        self.assertEqual([c['id'] for c in ext['connectors']], ['J01', 'J02'])
+        self.assertEqual(len(ext['pin_map']), 3)
+        self.assertEqual([p['tag'] for p in ext['connectors'][1]['pins']], ['CAN1_H', 'CAN1_L', 'CAN1_GND'])
+        self.assertEqual(self.post_json('/extensions', {'device_id': self.pdu.pk, 'connector_id': 'J99'}).status_code, 404)
+
+    def test_order_parts(self):
+        from orders.models import Order
+        resp = self.post_json('/order', {'lines': [{'part_number': 'DB25-M', 'quantity': 2}, {'part_number': 'DB25-M', 'quantity': 1},
+                                                   {'part_number': 'NOPE-1', 'quantity': 1}], 'note': 'Parts for harness H1'})
+        data = resp.json()
+        order = Order.objects.get(number=data['number'])
+        self.assertEqual(order.status, Order.Status.DRAFT)
+        self.assertEqual([(n, int(q)) for n, q in order.lines.values_list('part__part_number', 'quantity')], [('DB25-M', 3)])
+        self.assertEqual(data['missing'], ['NOPE-1'])
+        self.assertIn('NOPE-1', order.notes)
+        self.assertEqual(data['url'], order.get_absolute_url())
+        self.assertEqual(self.post_json('/order', {'lines': []}).status_code, 400)
+        parts = self.client.get(self.api + '/parts').json()['parts']
+        self.assertIn('DB25-M', [p['part_number'] for p in parts])
+
+    def test_designer_page_has_the_new_controls(self):
+        page = self.client.get(reverse('harness:designer'))
+        for text in ('id="connector-tip"', 'id="btn-create-extension"', 'id="btn-loopback-pending"', 'id="btn-order-parts"',
+                     'id="wire-colors"', '>Set</th>', '>Color</th>'):
+            self.assertContains(page, text)
+        self.assertNotContains(page, 'Wire type')

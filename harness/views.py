@@ -143,3 +143,63 @@ def project_images(request, pk):
     """Photos of a project's harnesses (the designer itself has no room for them)."""
     project = get_object_or_404(HarnessProject, pk=pk)
     return render(request, 'harness/project_images.html', {'project': project})
+
+
+# -- Extensions and ordering (the designer's connector tip and pinout popup) ----------
+
+@login_required
+@require_http_methods(['POST'])
+def api_extension(request):
+    """A new interconnect device with the exact pinout of the chosen connector
+    (created in the Devices module's terms: versioned, with its pin map)."""
+    data = _json_body(request) or {}
+    device = get_object_or_404(Device, pk=data.get('device_id') or 0)
+    connector = device.connectors.filter(designator=data.get('connector_id') or '').first()
+    if connector is None:
+        return JsonResponse({'error': 'That connector no longer exists on the device.'}, status=404)
+    ext = Device.make_extension(device, connector, user=request.user)
+    return JsonResponse(ext.to_harness())
+
+
+@login_required
+@require_GET
+def api_parts(request):
+    """Active parts, to pick a harness plug's part from."""
+    from inventory.models import Part
+    parts = Part.objects.filter(is_active=True).only('part_number', 'name')
+    return JsonResponse({'parts': [{'part_number': p.part_number, 'name': p.name} for p in parts]})
+
+
+@login_required
+@require_http_methods(['POST'])
+def api_order(request):
+    """A draft order (Orders module) with the parts of a harness, e.g. its plugs."""
+    from django.apps import apps
+    if not apps.is_installed('orders'):
+        return JsonResponse({'error': 'The Orders module is not installed.'}, status=400)
+    from inventory.models import Part
+    from orders.models import Order, OrderLine
+
+    data = _json_body(request) or {}
+    wanted = {}
+    for line in data.get('lines') or []:
+        number = str(line.get('part_number') or '').strip()
+        try:
+            qty = int(line.get('quantity') or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        if number and qty > 0:
+            wanted[number] = wanted.get(number, 0) + qty
+    parts = {p.part_number: p for p in Part.objects.filter(part_number__in=wanted)}
+    missing = sorted(set(wanted) - set(parts))
+    if not parts:
+        return JsonResponse({'error': 'None of those parts are in Inventory: ' + ', '.join(missing) if missing else 'No parts to order.'}, status=400)
+    note = str(data.get('note') or '')[:1000]
+    if missing:
+        note += ('\n' if note else '') + 'Not in Inventory, so not ordered: ' + ', '.join(missing)
+    order = Order.objects.create(created_by=request.user, notes=note)
+    for number, qty in wanted.items():
+        if number in parts:
+            OrderLine.objects.create(order=order, part=parts[number], quantity=qty, unit_price=parts[number].cost)
+    return JsonResponse({'number': order.number, 'url': order.get_absolute_url(), 'missing': missing,
+                         'lines': sum(1 for n in wanted if n in parts)})

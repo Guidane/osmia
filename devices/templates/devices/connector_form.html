@@ -11,17 +11,21 @@
 
     <fieldset>
       <legend>Pins</legend>
-      <p class="muted">Pins are numbered in the order shown. Blank new rows are ignored.</p>
+      <p class="muted">Pins keep the order shown. Blank new rows are ignored. Tags are unique within the connector;
+        pins with the same set number are one cable set (e.g. a twisted pair). Signals come from
+        <a href="{% url 'devices:signals' %}" target="_blank">Devices › Signals</a>.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
       <table class="list compact">
-        <thead><tr><th class="num">#</th><th>Pin label</th><th>Signal</th><th></th></tr></thead>
+        <thead><tr><th>Pin</th><th>Signal</th><th>Tag</th><th>Set</th><th>Set type</th><th></th></tr></thead>
         <tbody id="pin-rows">
         {% for f in formset %}
           <tr class="pin-row">
-            <td class="num muted">{{ forloop.counter }}</td>
             <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.label }}{{ f.label.errors }}</td>
-            <td>{{ f.signal }}</td>
+            <td>{{ f.signal }}{{ f.signal.errors }}</td>
+            <td>{{ f.tag }}{{ f.tag.errors }}</td>
+            <td>{{ f.set_number }}{{ f.set_number.errors }}</td>
+            <td>{{ f.set_type }}{{ f.set_type.errors }}</td>
             <td class="pin-remove-cell"><span hidden>{{ f.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
           </tr>
         {% endfor %}
@@ -29,9 +33,11 @@
       </table>
       <template id="pin-template">
         <tr class="pin-row">
-          <td class="num muted">new</td>
           <td>{% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}{{ formset.empty_form.label }}</td>
           <td>{{ formset.empty_form.signal }}</td>
+          <td>{{ formset.empty_form.tag }}</td>
+          <td>{{ formset.empty_form.set_number }}</td>
+          <td>{{ formset.empty_form.set_type }}</td>
           <td class="pin-remove-cell"><span hidden>{{ formset.empty_form.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
         </tr>
       </template>
@@ -51,6 +57,17 @@
   {% endif %}
 </div>
 <script>
+  // "Connector details" is for connectors without a part: shown only then.
+  (function () {
+    const part = document.getElementById('id_part');
+    const details = document.getElementById('id_details');
+    if (!part || !details) return;
+    const box = details.closest('.field');
+    const sync = () => { box.hidden = !!part.value; };
+    part.addEventListener('change', sync);
+    sync();
+  })();
+
   // "+ Add pin": a new blank row from the formset's empty form.
   (function () {
     const total = document.getElementById('id_pins-TOTAL_FORMS');
@@ -59,7 +76,11 @@
     document.getElementById('btn-add-pin').addEventListener('click', () => {
       rows.insertAdjacentHTML('beforeend', template.replace(/__prefix__/g, total.value));
       total.value = Number(total.value) + 1;
-      rows.lastElementChild.querySelector('input[type=text]').focus();
+      const label = rows.lastElementChild.querySelector('input[name$="-label"]');
+      const numbers = [...rows.querySelectorAll('input[name$="-label"]')].map(i => parseInt(i.value, 10)).filter(n => !isNaN(n));
+      label.value = numbers.length ? Math.max(...numbers) + 1 : 1;
+      label.focus();
+      label.select();
     });
 
     // "✕ Remove" ticks the row's hidden Delete box (the pin is removed on Save);

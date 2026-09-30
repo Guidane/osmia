@@ -37,7 +37,7 @@
 #workspace {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 48px - 46px);  /* Osmia bar + designer bar */
+  height: calc(100vh - var(--osmia-bar-height, 48px) - 46px);  /* Osmia bar (it wraps on narrow windows) + designer bar */
 }
 
 #main {
@@ -110,22 +110,17 @@
   background-size: 20px 20px;
 }
 #canvas { background: transparent; display: block; }
-#btn-loopback-pending {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 5;
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #3b7dd8;
-  background: #fff;
-  color: #3b7dd8;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+/* The tip next to a clicked connector: loop back, create extension, or click another */
+#connector-tip {
+  position: absolute; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 420px;
+  padding: 6px 8px; border-radius: 8px; border: 1px solid #3b7dd8; background: #fff; font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
 }
-#btn-loopback-pending:hover { background: #eaf1fd; }
+#connector-tip.hidden { display: none; }
+#connector-tip #connector-tip-title { color: #1e4fa3; margin-right: 2px; }
+#connector-tip button { padding: 4px 10px; border-radius: 14px; border: 1px solid #3b7dd8; background: #fff; color: #3b7dd8; font-size: 12px; cursor: pointer; }
+#connector-tip button:hover { background: #3b7dd8; color: #fff; }
+#connector-tip .tip-hint { color: #777; }
 
 #harness-list .harness-row {
   font-size: 12px;
@@ -636,3 +631,18 @@
 /* Loopback wires: both pins on the left, one merged "loop back" cell on the right */
 #conn-table td.loop-indicator-cell { text-align: center; vertical-align: middle; color: #555; font-weight: 600; background: #fafafa; }
 #conn-table tr.loop-second-pin td { border-top: 0; }
+
+/* Pinout popup: no bold anywhere; tags, sets and wire colours */
+#drawer, #drawer th, #drawer strong, #drawer-header, #drawer .sub-header-cell, #conn-table td.pin-cell select,
+#conn-table td.loop-indicator-cell, #conn-table .conn-set { font-weight: normal; }
+#conn-table td.tag-cell { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #333; white-space: nowrap; }
+#conn-table td.tag-cell.inherited { color: #6b4fa0; font-style: italic; }
+#conn-table td.set-cell { font-size: 12px; color: #444; white-space: nowrap; }
+#conn-table td.color-cell { white-space: nowrap; }
+#conn-table td.color-cell input { width: 90px; }
+.wire-swatch { display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: middle; border: 1px solid #999; border-radius: 2px; }
+.wire-swatch.unknown { background: repeating-linear-gradient(45deg, #eee, #eee 3px, #fff 3px, #fff 6px); }
+
+/* Order parts */
+#order-modal input.suggested { color: #8a6d1f; background: #fff8e6; }
+#order-modal input.qty { width: 60px; }

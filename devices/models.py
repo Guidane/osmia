@@ -28,6 +28,7 @@ class Device(models.Model):
         ELECTRONIC_LOAD = 'electronic_load', 'Electronic / test load'
         MEASUREMENT = 'measurement', 'Measurement (DMM, scope, ...)'
         SIGNAL_SOURCE = 'signal_source', 'Signal generator / source'
+        INTERCONNECT = 'interconnect', 'Interconnect (adapter, breakout, extension)'
         OTHER = 'other', 'Other'
 
     name = models.CharField(max_length=200)
@@ -66,27 +67,45 @@ class Device(models.Model):
     def is_external(self):
         return self.origin == self.Origin.EXTERNAL
 
+    @property
+    def is_interconnect(self):
+        """Passes signals through: its input pins are mapped to output pins, and
+        in harnesses the mapped pins take the tags of the unit on the other side."""
+        return self.role == self.Role.INTERCONNECT
+
     # -- harness-format definition ------------------------------------------
 
     def definition(self):
         """The device in the harness designer's JSON format (without id/version)."""
-        return {
+        connectors = list(self.connectors.prefetch_related('pins'))
+        data = {
             'name': self.name,
             'part_number': self.part_number,
             'color': self.color,
+            'role': self.role,
             'responsible_user_id': str(self.responsible_id) if self.responsible_id else None,
             'connectors': [
                 {
                     'id': c.designator,
                     'side': c.side,
+                    'gender': c.gender,
+                    'details': c.details,
                     'pins': [
-                        {'id': str(p.position), 'label': p.label, 'signal': p.signal}
+                        {'id': str(p.position), 'label': p.label, 'signal': p.signal, 'tag': p.tag,
+                         'set': p.set_number, 'set_type': p.set_type}
                         for p in c.pins.all()
                     ],
                 }
-                for c in self.connectors.prefetch_related('pins')
+                for c in connectors
             ],
         }
+        if self.is_interconnect:
+            # [[connector, pin, connector, pin], ...] with pin ids as in 'pins' above
+            data['pin_map'] = [
+                [m.from_pin.connector.designator, str(m.from_pin.position), m.to_pin.connector.designator, str(m.to_pin.position)]
+                for m in self.pin_maps.select_related('from_pin__connector', 'to_pin__connector')
+            ]
+        return data
 
     @transaction.atomic
     def apply_definition(self, data):
@@ -95,6 +114,8 @@ class Device(models.Model):
         self.name = (data.get('name') or self.name or 'Unnamed device').strip()
         self.part_number = (data.get('part_number') or '').strip()
         self.color = data.get('color') or self.color
+        if data.get('role') in self.Role.values:
+            self.role = data['role']
         owner = data.get('responsible_user_id')
         self.responsible_id = int(owner) if str(owner or '').isdigit() else None
         self.save()
@@ -106,6 +127,8 @@ class Device(models.Model):
             connector = Connector.objects.create(
                 device=self, designator=designator, position=c_index,
                 side=c.get('side') if c.get('side') in Connector.Side.values else Connector.Side.RIGHT,
+                gender=c.get('gender') if c.get('gender') in Connector.Gender.values else '',
+                details=(c.get('details') or '')[:200],
                 part_id=part_id, description=description,
             )
             Pin.objects.bulk_create(
@@ -113,9 +136,16 @@ class Device(models.Model):
                     connector=connector, position=p_index + 1,
                     label=(p.get('label') or str(p_index + 1)).strip()[:20],
                     signal=(p.get('signal') or '').strip()[:50],
+                    tag=(p.get('tag') or '').strip()[:50],
+                    set_number=p.get('set') if isinstance(p.get('set'), int) else None,
+                    set_type=p.get('set_type') if p.get('set_type') in Pin.SetType.values else '',
                 )
                 for p_index, p in enumerate(c.get('pins') or [])
             )
+        pins = {(p.connector.designator, str(p.position)): p for p in Pin.objects.filter(connector__device=self).select_related('connector')}
+        for row in data.get('pin_map') or []:
+            if len(row) == 4 and (row[0], row[1]) in pins and (row[2], row[3]) in pins:
+                PinMap.objects.get_or_create(device=self, from_pin=pins[(row[0], row[1])], to_pin=pins[(row[2], row[3])])
 
     def snapshot(self, user=None):
         """Record the current definition as a new version if it changed.
@@ -154,6 +184,53 @@ class Device(models.Model):
             } if part else None
         return data
 
+    def next_designator(self, prefix='J'):
+        taken = set(self.connectors.values_list('designator', flat=True))
+        n = 1
+        while f'{prefix}{n:02d}' in taken:
+            n += 1
+        return f'{prefix}{n:02d}'
+
+    @transaction.atomic
+    def clone_connector(self, connector, designator=None):
+        """A copy of ``connector`` (settings and pins) on this device."""
+        copy = Connector.objects.create(
+            device=self, designator=designator or self.next_designator(connector.designator[:1] or 'J'),
+            side=connector.side, gender=connector.gender, part=connector.part, details=connector.details,
+            description=connector.description, position=self.connectors.count() + 1,
+        )
+        Pin.objects.bulk_create(
+            Pin(connector=copy, position=p.position, label=p.label, signal=p.signal, tag=p.tag,
+                set_number=p.set_number, set_type=p.set_type)
+            for p in connector.pins.all()
+        )
+        return copy
+
+    @classmethod
+    @transaction.atomic
+    def make_extension(cls, device, connector, user=None):
+        """An extension for ``device``'s ``connector``: an interconnect whose
+        input (J01, the harness from the connector plugs in here) is mapped pin
+        for pin to an output (J02) with exactly the same pinout."""
+        ext = cls.objects.create(
+            name=f'{device.name} {connector.designator} extension'[:200], role=cls.Role.INTERCONNECT,
+            origin=device.origin, color='#6b7280', responsible=user,
+            notes=f'Extends {device.name} {connector.designator}: J02 has the same pinout.',
+        )
+        opposite = {'pin': 'socket', 'socket': 'pin'}.get(connector.gender, '')
+        inp = Connector.objects.create(device=ext, designator='J01', side=Connector.Side.LEFT, position=1, gender=opposite,
+                                       description=f'In, from {device.name} {connector.designator}')
+        out = Connector.objects.create(device=ext, designator='J02', side=Connector.Side.RIGHT, position=2,
+                                       gender=connector.gender, part=connector.part, details=connector.details,
+                                       description=f'Out, same pinout as {device.name} {connector.designator}')
+        for p in connector.pins.all():
+            kw = dict(position=p.position, label=p.label, signal=p.signal, tag=p.tag, set_number=p.set_number, set_type=p.set_type)
+            a = Pin.objects.create(connector=inp, **kw)
+            b = Pin.objects.create(connector=out, **kw)
+            PinMap.objects.create(device=ext, from_pin=a, to_pin=b)
+        ext.snapshot(user)
+        return ext
+
 
 class Connector(models.Model):
     def audit_record(self):
@@ -163,6 +240,10 @@ class Connector(models.Model):
         LEFT = 'left', 'Left'
         RIGHT = 'right', 'Right'
 
+    class Gender(models.TextChoices):
+        PIN = 'pin', 'Pin (male)'
+        SOCKET = 'socket', 'Socket (female)'
+
     device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='connectors')
     designator = models.CharField(max_length=20, help_text='e.g. J01 (jack on the device) or P01 (plug).')
     side = models.CharField(max_length=5, choices=Side, default=Side.RIGHT, help_text='Where it sits in the harness designer.')
@@ -170,8 +251,12 @@ class Connector(models.Model):
         'inventory.Part', null=True, blank=True, on_delete=models.SET_NULL, related_name='device_connectors',
         verbose_name='Physical connector', help_text='The connector part, e.g. a D-sub 25 socket. Its description is shown as the connector type in harnesses.',
     )
+    gender = models.CharField(max_length=10, choices=Gender, blank=True)
+    details = models.CharField('Connector details', max_length=200, blank=True,
+                               help_text='When no part is set: what the connector is, e.g. "M12 8-pin A-coded".')
     description = models.CharField(max_length=200, blank=True, help_text='e.g. "Main power in".')
     position = models.PositiveIntegerField(default=0)
+    images = GenericRelation('core.Image')  # e.g. a drawing of the pinout
 
     class Meta:
         ordering = ['position', 'designator']
@@ -190,22 +275,88 @@ class Connector(models.Model):
         signals = [p.signal for p in self.pins.all() if p.signal]
         return ', '.join(sorted(set(signals)))
 
+    @property
+    def type_label(self):
+        """What the connector is: its part's description, else its details."""
+        return (self.part.name or self.part.part_number) if self.part else self.details
+
+    def get_absolute_url(self):
+        return f'{self.device.get_absolute_url()}?connector={self.pk}'
+
 
 class Pin(models.Model):
     def audit_record(self):
         return self.connector.device  # logged on the device
 
+    class SetType(models.TextChoices):
+        STRAIGHT = 'straight', 'Straight'
+        TWISTED = 'twisted', 'Twisted'
+        SHIELDED = 'shielded', 'Shielded'
+        TWISTED_SHIELDED = 'twisted_shielded', 'Twisted shielded'
+
     connector = models.ForeignKey(Connector, on_delete=models.CASCADE, related_name='pins')
     position = models.PositiveIntegerField()
     label = models.CharField(max_length=20, help_text='The number printed on the connector, e.g. 13.')
-    signal = models.CharField(max_length=50, blank=True, help_text='e.g. PWR, GND, CAN_H.')
+    signal = models.CharField(max_length=50, blank=True, help_text='One of the signals in Devices > Signals.')
+    tag = models.CharField(max_length=50, blank=True, help_text="A name for what the pin carries, e.g. MOTOR_A+. Unique within the connector.")
+    # Pins wired as one cable set, e.g. a twisted pair: same set number, and how they're run.
+    set_number = models.PositiveSmallIntegerField('Set', null=True, blank=True)
+    set_type = models.CharField(max_length=20, choices=SetType, blank=True)
 
     class Meta:
         ordering = ['position']
-        constraints = [models.UniqueConstraint(fields=['connector', 'position'], name='unique_pin_position')]
+        constraints = [
+            models.UniqueConstraint(fields=['connector', 'position'], name='unique_pin_position'),
+            models.UniqueConstraint(fields=['connector', 'tag'], condition=~models.Q(tag=''), name='unique_pin_tag_per_connector'),
+        ]
 
     def __str__(self):
         return f'{self.connector} pin {self.label}'
+
+
+class PinMap(models.Model):
+    """On an interconnect: an input pin passed through to an output pin."""
+
+    device = models.ForeignKey(Device, on_delete=models.CASCADE, related_name='pin_maps')
+    from_pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='maps_out')
+    to_pin = models.ForeignKey(Pin, on_delete=models.CASCADE, related_name='maps_in')
+
+    class Meta:
+        ordering = ['from_pin__connector__position', 'from_pin__position']
+        constraints = [models.UniqueConstraint(fields=['from_pin', 'to_pin'], name='unique_pin_map')]
+
+    def __str__(self):
+        return f'{self.from_pin.connector.designator}.{self.from_pin.label} → {self.to_pin.connector.designator}.{self.to_pin.label}'
+
+
+class Signal(models.Model):
+    """The signals pins can carry, shared by all devices (Devices > Signals)."""
+
+    name = models.CharField(max_length=50, unique=True)
+    description = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    @transaction.atomic
+    def rename(self, new_name):
+        """Rename, and the pins (and harness signal rules) that use it follow."""
+        old = self.name
+        self.name = new_name
+        self.save()
+        if old != new_name:
+            Pin.objects.filter(signal=old).update(signal=new_name)
+            from django.apps import apps
+            if apps.is_installed('harness'):
+                SignalRule = apps.get_model('harness', 'SignalRule')
+                SignalRule.objects.filter(signal_a=old).update(signal_a=new_name)
+                SignalRule.objects.filter(signal_b=old).update(signal_b=new_name)
+
+    def usage(self):
+        return Pin.objects.filter(signal=self.name).count()
 
 
 class DeviceVersion(models.Model):
