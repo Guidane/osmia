@@ -44,17 +44,19 @@
       </dl>
       <table class="list pin-table">
         <thead><tr>
-          <th><a href="?connector={{ c.pk }}" class="{% if not sort %}sorted{% endif %}">Pin</a></th>
-          <th><a href="?connector={{ c.pk }}&amp;sort=signal" class="{% if sort == 'signal' %}sorted{% endif %}">Signal</a></th>
-          <th><a href="?connector={{ c.pk }}&amp;sort=tag" class="{% if sort == 'tag' %}sorted{% endif %}" title="Sort by tag">Tag</a></th>
-          <th>Set</th><th>Set type</th>
+          {% for key, label in sort_columns %}
+            <th><a href="?connector={{ c.pk }}{% if sort_key == key and not sort_desc %}&amp;sort=-{{ key }}{% elif sort_key != key or not sort_desc %}&amp;sort={{ key }}{% endif %}"
+                   class="{% if sort_key == key %}sorted{% if sort_desc %} desc{% endif %}{% endif %}"
+                   title="Sort by {{ label|lower }}{% if sort_key == key %} (click again to reverse){% endif %}">{{ label }}</a></th>
+          {% endfor %}
         </tr></thead>
         <tbody>
         {% for p in pins %}
-          <tr><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td><td>{% if p.tag %}<code>{{ p.tag }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <tr><td>{{ p.label }}</td><td>{{ p.signal|default:"—" }}</td>
+              {% for t in p.tags %}<td>{% if t %}<code>{{ t }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>{% endfor %}
               <td>{{ p.set_number|default:"—" }}</td><td>{{ p.get_set_type_display|default:"—" }}</td></tr>
         {% empty %}
-          <tr><td colspan="5" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>
+          <tr><td colspan="8" class="muted">No pins yet. <a href="{% url 'devices:connector_edit' d.pk c.pk %}">Add some</a>.</td></tr>
         {% endfor %}
         </tbody>
       </table>

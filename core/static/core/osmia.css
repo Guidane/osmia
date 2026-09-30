@@ -324,7 +324,9 @@ table[data-select] tbody tr.selected td { background: #f3ecf1; }
 /* Devices: signals, pin tables, pin mapping */
 .card.narrow-wide { max-width: 860px; }
 .pin-table th a { color: inherit; }
-.pin-table th a.sorted::after { content: " ▾"; }
+.pin-table th a.sorted::after { content: " ▲"; font-size: 10px; }
+.pin-table th a.sorted.desc::after { content: " ▼"; }
+select.tag-select { max-width: 9em; }
 .map-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; }
 
 /* Narrow windows: the bar wraps, and the module switcher gets a row of its own. */

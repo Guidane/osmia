@@ -11,19 +11,20 @@
 
     <fieldset>
       <legend>Pins</legend>
-      <p class="muted">Pins keep the order shown. Blank new rows are ignored. Tags are unique within the connector;
-        pins with the same set number are one cable set (e.g. a twisted pair). Signals come from
-        <a href="{% url 'devices:signals' %}" target="_blank">Devices › Signals</a>.</p>
+      <p class="muted">Pins keep the order shown. Blank new rows are ignored. Pins with the same set number are one cable set
+        (e.g. a twisted pair). Signals come from <a href="{% url 'devices:signals' %}" target="_blank">Devices › Signals</a>;
+        each tag column has its own list (<a href="{% url 'devices:tags' %}" target="_blank">Devices › Tags</a>), and
+        "+ Add new…" adds to it.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
       <table class="list compact">
-        <thead><tr><th>Pin</th><th>Signal</th><th>Tag</th><th>Set</th><th>Set type</th><th></th></tr></thead>
+        <thead><tr><th>Pin</th><th>Signal</th><th>Tag 1</th><th>Tag 2</th><th>Tag 3</th><th>Tag 4</th><th>Set</th><th>Set type</th><th></th></tr></thead>
         <tbody id="pin-rows">
         {% for f in formset %}
           <tr class="pin-row">
             <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.label }}{{ f.label.errors }}</td>
             <td>{{ f.signal }}{{ f.signal.errors }}</td>
-            <td>{{ f.tag }}{{ f.tag.errors }}</td>
+            <td>{{ f.tag1 }}</td><td>{{ f.tag2 }}</td><td>{{ f.tag3 }}</td><td>{{ f.tag4 }}</td>
             <td>{{ f.set_number }}{{ f.set_number.errors }}</td>
             <td>{{ f.set_type }}{{ f.set_type.errors }}</td>
             <td class="pin-remove-cell"><span hidden>{{ f.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
@@ -35,7 +36,7 @@
         <tr class="pin-row">
           <td>{% for h in formset.empty_form.hidden_fields %}{{ h }}{% endfor %}{{ formset.empty_form.label }}</td>
           <td>{{ formset.empty_form.signal }}</td>
-          <td>{{ formset.empty_form.tag }}</td>
+          <td>{{ formset.empty_form.tag1 }}</td><td>{{ formset.empty_form.tag2 }}</td><td>{{ formset.empty_form.tag3 }}</td><td>{{ formset.empty_form.tag4 }}</td>
           <td>{{ formset.empty_form.set_number }}</td>
           <td>{{ formset.empty_form.set_type }}</td>
           <td class="pin-remove-cell"><span hidden>{{ formset.empty_form.DELETE }}</span><button type="button" class="btn small pin-remove">✕ Remove</button></td>
@@ -68,13 +69,40 @@
     sync();
   })();
 
+  // Tag dropdowns: "+ Add new…" asks for the value, adds it to that column's
+  // dropdowns on the page (it joins the column's list when saved) and picks it.
+  (function () {
+    const form = document.querySelector('form.form');
+    let previous = new WeakMap();
+    form.addEventListener('focusin', e => { if (e.target.matches('select.tag-select')) previous.set(e.target, e.target.value); });
+    form.addEventListener('change', e => {
+      const select = e.target;
+      if (!select.matches('select.tag-select') || select.value !== '__new__') return;
+      const name = (window.prompt(`New value for Tag ${select.dataset.column}:`) || '').trim();
+      if (!name) { select.value = previous.get(select) || ''; return; }
+      const column = select.dataset.column;
+      const selects = [...document.querySelectorAll(`select.tag-select[data-column="${column}"]`)];
+      const template = document.getElementById('pin-template');
+      const templateSelect = template && template.content.querySelector(`select.tag-select[data-column="${column}"]`);
+      for (const s of [...selects, templateSelect].filter(Boolean)) {
+        if ([...s.options].some(o => o.value.toLowerCase() === name.toLowerCase())) continue;
+        s.insertBefore(new Option(name, name), s.querySelector('option[value="__new__"]'));
+      }
+      const existing = [...select.options].find(o => o.value.toLowerCase() === name.toLowerCase());
+      select.value = existing ? existing.value : name;
+      previous.set(select, select.value);
+    });
+  })();
+
   // "+ Add pin": a new blank row from the formset's empty form.
   (function () {
     const total = document.getElementById('id_pins-TOTAL_FORMS');
     const rows = document.getElementById('pin-rows');
-    const template = document.getElementById('pin-template').innerHTML;
+    const template = document.getElementById('pin-template');
     document.getElementById('btn-add-pin').addEventListener('click', () => {
-      rows.insertAdjacentHTML('beforeend', template.replace(/__prefix__/g, total.value));
+      const holder = document.createElement('tbody');
+      holder.appendChild(template.content.cloneNode(true));
+      rows.insertAdjacentHTML('beforeend', holder.innerHTML.replace(/__prefix__/g, total.value));
       total.value = Number(total.value) + 1;
       const label = rows.lastElementChild.querySelector('input[name$="-label"]');
       const numbers = [...rows.querySelectorAll('input[name$="-label"]')].map(i => parseInt(i.value, 10)).filter(n => !isNaN(n));

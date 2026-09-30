@@ -33,7 +33,7 @@ class HarnessApiTests(HarnessTestCase):
         pdu = next(d for d in devices if d['id'] == str(self.pdu.pk))
         self.assertEqual(pdu['version'], 1)
         self.assertEqual([c['id'] for c in pdu['connectors']], ['J01', 'J02'])
-        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR', 'tag': 'PWR_IN+', 'set': None, 'set_type': ''}, pdu['connectors'][0]['pins'])
+        self.assertIn({'id': '1', 'label': '1', 'signal': 'PWR', 'tags': ['PWR_IN+', '', '', ''], 'set': None, 'set_type': ''}, pdu['connectors'][0]['pins'])
 
     def test_harness_cannot_create_or_change_devices(self):
         before = (Device.objects.count(), self.pdu.version, list(self.pdu.connectors.values_list('designator', flat=True)))
@@ -160,7 +160,7 @@ class ExtensionAndOrderTests(HarnessTestCase):
         self.assertEqual(ext['role'], 'interconnect')
         self.assertEqual([c['id'] for c in ext['connectors']], ['J01', 'J02'])
         self.assertEqual(len(ext['pin_map']), 3)
-        self.assertEqual([p['tag'] for p in ext['connectors'][1]['pins']], ['CAN1_H', 'CAN1_L', 'CAN1_GND'])
+        self.assertEqual([p['tags'][0] for p in ext['connectors'][1]['pins']], ['CAN1_H', 'CAN1_L', 'CAN1_GND'])
         self.assertEqual(self.post_json('/extensions', {'device_id': self.pdu.pk, 'connector_id': 'J99'}).status_code, 404)
 
     def test_order_parts(self):

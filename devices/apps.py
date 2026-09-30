@@ -14,5 +14,6 @@ class DevicesConfig(OsmiaModuleConfig):
             MenuItem('Devices', 'devices:list'),
             MenuItem('New device', 'devices:create'),
             MenuItem('Signals', 'devices:signals'),
+            MenuItem('Tags', 'devices:tags'),
         ),
     )

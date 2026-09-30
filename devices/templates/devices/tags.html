@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card narrow-wide">
+  <h1>Tags</h1>
+  <p class="muted">Each of the four tag columns on a connector's pins has its own list, shared by all devices. Values are also added from
+    the pin editor with "+ Add new…". Renaming a value renames it on every pin; a value still used by pins can't be deleted.</p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ formset.management_form }}
+    {{ formset.non_form_errors }}
+    <table class="list compact">
+      <thead><tr><th>Column</th><th>Value</th><th class="num">Pins</th><th>Delete</th></tr></thead>
+      <tbody id="tag-rows">
+      {% for f in formset %}
+        <tr>
+          <td>{% for h in f.hidden_fields %}{{ h }}{% endfor %}{{ f.column }}{{ f.column.errors }}</td>
+          <td>{{ f.name }}{{ f.name.errors }}</td>
+          <td class="num">{% if f.instance.pk %}{{ f.instance.usage }}{% endif %}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <template id="tag-template">
+      <tr><td>{{ formset.empty_form.column }}</td><td>{{ formset.empty_form.name }}</td><td></td><td></td></tr>
+    </template>
+    <button type="button" class="btn small" id="btn-add-tag">+ Add value</button>
+    <div class="actions"><button class="btn primary">Save</button></div>
+  </form>
+</div>
+<script>
+  (function () {
+    const total = document.getElementById('id_tags-TOTAL_FORMS');
+    const rows = document.getElementById('tag-rows');
+    const template = document.getElementById('tag-template').innerHTML;
+    document.getElementById('btn-add-tag').addEventListener('click', () => {
+      rows.insertAdjacentHTML('beforeend', template.replace(/__prefix__/g, total.value));
+      total.value = Number(total.value) + 1;
+      rows.lastElementChild.querySelector('input').focus();
+    });
+  })();
+</script>
+{% endblock %}

@@ -3,15 +3,15 @@ from django.contrib.auth import get_user_model
 from assemblies.models import Assembly, AssemblyComponent
 from inventory.models import Part
 
-from .models import Connector, Device, Pin, Signal
+from .models import Connector, Device, Pin, Signal, TagOption
 
 
 def _pins(connector, rows):
-    """rows: (label, signal[, tag[, set number, set type]])."""
+    """rows: (label, signal[, tag 1[, set number, set type]])."""
     for i, (label, signal, *more) in enumerate(rows, start=1):
         tag = more[0] if more else ''
         set_number, set_type = (more[1], more[2]) if len(more) > 2 else (None, '')
-        Pin.objects.create(connector=connector, position=i, label=label, signal=signal, tag=tag,
+        Pin.objects.create(connector=connector, position=i, label=label, signal=signal, tag1=tag,
                            set_number=set_number, set_type=set_type)
 
 
@@ -19,6 +19,9 @@ def _signals():
     """The shared signal list gets every signal the demo pins use."""
     for name in sorted(set(Pin.objects.exclude(signal='').values_list('signal', flat=True))):
         Signal.objects.get_or_create(name=name)
+    for column, field in enumerate(Pin.TAG_FIELDS, start=1):
+        for name in sorted(set(Pin.objects.exclude(**{field: ''}).values_list(field, flat=True))):
+            TagOption.objects.get_or_create(column=column, name=name)
 
 
 def load():

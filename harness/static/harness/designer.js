@@ -369,10 +369,16 @@ function mappedPins(device, connectorId, pinId) {
   return out;
 }
 
-// The tag to show for a pin. A unit's pins have their own tag. An
-// interconnect's pins take the tag of the unit on the other side of it:
-// follow the pin map through, then the wire out, then (for chained
-// interconnects) on again. Returns {tag, inherited, from} or null.
+// A pin's tags (Tag 1-4 in Devices; older device versions had one "tag").
+function pinTags(pin) {
+  const tags = pin && (pin.tags || (pin.tag ? [pin.tag] : []));
+  return (tags || []).filter(Boolean);
+}
+
+// The tags to show for a pin, as one text (e.g. "CAN1_H · Bus A"). A unit's
+// pins have their own. An interconnect's pins take the tags of the unit on the
+// other side of it: follow the pin map through, then the wire out, then (for
+// chained interconnects) on again. Returns {tag, inherited, from} or null.
 function effectiveTag(instanceId, connectorId, pinId, seen = new Set()) {
   const key = pinKey(instanceId, connectorId, pinId);
   if (seen.has(key)) return null;
@@ -381,7 +387,8 @@ function effectiveTag(instanceId, connectorId, pinId, seen = new Set()) {
   const device = inst && state.devices[inst.device_id];
   const pin = pinOf(instanceId, connectorId, pinId);
   if (!pin) return null;
-  if (!isInterconnect(device)) return pin.tag ? { tag: pin.tag, inherited: false } : null;
+  const own = pinTags(pin).join(" · ");
+  if (!isInterconnect(device)) return own ? { tag: own, inherited: false } : null;
   for (const through of mappedPins(device, connectorId, pinId)) {
     seen.add(pinKey(instanceId, through.connectorId, through.pinId));
     for (const far of wiredTo(instanceId, through.connectorId, through.pinId)) {
@@ -394,7 +401,7 @@ function effectiveTag(instanceId, connectorId, pinId, seen = new Set()) {
       }
     }
   }
-  return pin.tag ? { tag: pin.tag, inherited: false } : null;
+  return own ? { tag: own, inherited: false } : null;
 }
 
 function tagCell(ctx, pinId) {
@@ -1294,7 +1301,7 @@ function updateCreateConnectButton() {
 }
 
 function pinOptionLabel(pin) {
-  return [pin.label, pin.tag, pin.signal].filter(Boolean).join(" · ");
+  return [pin.label, ...pinTags(pin), pin.signal].filter(Boolean).join(" · ");
 }
 
 function pickPinSelect(options, value, onChange) {

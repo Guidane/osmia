@@ -91,7 +91,7 @@ class Device(models.Model):
                     'gender': c.gender,
                     'details': c.details,
                     'pins': [
-                        {'id': str(p.position), 'label': p.label, 'signal': p.signal, 'tag': p.tag,
+                        {'id': str(p.position), 'label': p.label, 'signal': p.signal, 'tags': p.tags,
                          'set': p.set_number, 'set_type': p.set_type}
                         for p in c.pins.all()
                     ],
@@ -136,7 +136,7 @@ class Device(models.Model):
                     connector=connector, position=p_index + 1,
                     label=(p.get('label') or str(p_index + 1)).strip()[:20],
                     signal=(p.get('signal') or '').strip()[:50],
-                    tag=(p.get('tag') or '').strip()[:50],
+                    **Pin.tags_from(p),
                     set_number=p.get('set') if isinstance(p.get('set'), int) else None,
                     set_type=p.get('set_type') if p.get('set_type') in Pin.SetType.values else '',
                 )
@@ -200,7 +200,7 @@ class Device(models.Model):
             description=connector.description, position=self.connectors.count() + 1,
         )
         Pin.objects.bulk_create(
-            Pin(connector=copy, position=p.position, label=p.label, signal=p.signal, tag=p.tag,
+            Pin(connector=copy, position=p.position, label=p.label, signal=p.signal, **p.tag_fields(),
                 set_number=p.set_number, set_type=p.set_type)
             for p in connector.pins.all()
         )
@@ -224,7 +224,7 @@ class Device(models.Model):
                                        gender=connector.gender, part=connector.part, details=connector.details,
                                        description=f'Out, same pinout as {device.name} {connector.designator}')
         for p in connector.pins.all():
-            kw = dict(position=p.position, label=p.label, signal=p.signal, tag=p.tag, set_number=p.set_number, set_type=p.set_type)
+            kw = dict(position=p.position, label=p.label, signal=p.signal, set_number=p.set_number, set_type=p.set_type, **p.tag_fields())
             a = Pin.objects.create(connector=inp, **kw)
             b = Pin.objects.create(connector=out, **kw)
             PinMap.objects.create(device=ext, from_pin=a, to_pin=b)
@@ -298,17 +298,34 @@ class Pin(models.Model):
     position = models.PositiveIntegerField()
     label = models.CharField(max_length=20, help_text='The number printed on the connector, e.g. 13.')
     signal = models.CharField(max_length=50, blank=True, help_text='One of the signals in Devices > Signals.')
-    tag = models.CharField(max_length=50, blank=True, help_text="A name for what the pin carries, e.g. MOTOR_A+. Unique within the connector.")
+    # Four tag columns, each picked from its own list (Devices > Tags).
+    tag1 = models.CharField('Tag 1', max_length=50, blank=True)
+    tag2 = models.CharField('Tag 2', max_length=50, blank=True)
+    tag3 = models.CharField('Tag 3', max_length=50, blank=True)
+    tag4 = models.CharField('Tag 4', max_length=50, blank=True)
     # Pins wired as one cable set, e.g. a twisted pair: same set number, and how they're run.
     set_number = models.PositiveSmallIntegerField('Set', null=True, blank=True)
     set_type = models.CharField(max_length=20, choices=SetType, blank=True)
 
     class Meta:
         ordering = ['position']
-        constraints = [
-            models.UniqueConstraint(fields=['connector', 'position'], name='unique_pin_position'),
-            models.UniqueConstraint(fields=['connector', 'tag'], condition=~models.Q(tag=''), name='unique_pin_tag_per_connector'),
-        ]
+        constraints = [models.UniqueConstraint(fields=['connector', 'position'], name='unique_pin_position')]
+
+    TAG_FIELDS = ('tag1', 'tag2', 'tag3', 'tag4')
+
+    @property
+    def tags(self):
+        return [getattr(self, f) for f in self.TAG_FIELDS]
+
+    def tag_fields(self):
+        return {f: getattr(self, f) for f in self.TAG_FIELDS}
+
+    @classmethod
+    def tags_from(cls, data):
+        """Tag fields from a harness-format pin (older versions had one 'tag')."""
+        values = list(data.get('tags') or [data.get('tag') or ''])
+        values += [''] * (4 - len(values))
+        return {f: str(v or '').strip()[:50] for f, v in zip(cls.TAG_FIELDS, values)}
 
     def __str__(self):
         return f'{self.connector} pin {self.label}'
@@ -327,6 +344,43 @@ class PinMap(models.Model):
 
     def __str__(self):
         return f'{self.from_pin.connector.designator}.{self.from_pin.label} → {self.to_pin.connector.designator}.{self.to_pin.label}'
+
+
+class TagOption(models.Model):
+    """A value that can be picked in one of the four pin tag columns."""
+
+    column = models.PositiveSmallIntegerField(choices=[(i, f'Tag {i}') for i in range(1, 5)])
+    name = models.CharField(max_length=50)
+
+    class Meta:
+        ordering = ['column', 'name']
+        constraints = [models.UniqueConstraint(fields=['column', 'name'], name='unique_tag_option')]
+
+    def __str__(self):
+        return f'Tag {self.column}: {self.name}'
+
+    @property
+    def field(self):
+        return f'tag{self.column}'
+
+    def usage(self):
+        return Pin.objects.filter(**{self.field: self.name}).count()
+
+    @transaction.atomic
+    def rename(self, new_name):
+        old = self.name
+        self.name = new_name
+        self.save()
+        if old != new_name:
+            Pin.objects.filter(**{self.field: old}).update(**{self.field: new_name})
+
+    @classmethod
+    def names(cls):
+        """{column: [names]} for all four columns."""
+        out = {i: [] for i in range(1, 5)}
+        for column, name in cls.objects.values_list('column', 'name'):
+            out[column].append(name)
+        return out
 
 
 class Signal(models.Model):

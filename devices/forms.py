@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from assemblies.models import Assembly
 from inventory.models import Part
 
-from .models import Connector, Device, Pin, Signal
+from .models import Connector, Device, Pin, Signal, TagOption
 
 
 class DeviceForm(forms.ModelForm):
@@ -47,19 +47,21 @@ class ConnectorForm(forms.ModelForm):
         return designator
 
 
+ADD_NEW = '__new__'  # the "+ Add new…" entry in a tag dropdown (turned into a real value by the page's script)
+
+
 class PinForm(forms.ModelForm):
     signal = forms.ChoiceField(required=False)
 
     class Meta:
         model = Pin
-        fields = ['label', 'signal', 'tag', 'set_number', 'set_type']
+        fields = ['label', 'signal', *Pin.TAG_FIELDS, 'set_number', 'set_type']
         widgets = {
             'label': forms.TextInput(attrs={'style': 'width: 6em'}),
-            'tag': forms.TextInput(attrs={'style': 'width: 10em'}),
             'set_number': forms.NumberInput(attrs={'style': 'width: 5em', 'min': 1}),
         }
 
-    def __init__(self, *args, signals=None, **kwargs):
+    def __init__(self, *args, signals=None, tag_options=None, **kwargs):
         super().__init__(*args, **kwargs)
         names = list(signals if signals is not None else Signal.objects.values_list('name', flat=True))
         current = self.instance.signal if self.instance.pk else ''
@@ -67,31 +69,44 @@ class PinForm(forms.ModelForm):
             names.append(current)  # an old value that isn't in the list yet
         self.fields['signal'].choices = [('', '—')] + [(n, n) for n in names]
 
-    def clean_tag(self):
-        return (self.cleaned_data.get('tag') or '').strip()
+        options = tag_options if tag_options is not None else TagOption.names()
+        for column, field in enumerate(Pin.TAG_FIELDS, start=1):
+            values = list(options.get(column, []))
+            # Keep the pin's own value, and one just added on the page, even if the list doesn't have it yet.
+            for extra in (getattr(self.instance, field, ''), self.data.get(self.add_prefix(field), '') if self.is_bound else ''):
+                if extra and extra != ADD_NEW and extra not in values:
+                    values.append(extra)
+            self.fields[field].widget = forms.Select(
+                choices=[('', '—')] + [(v, v) for v in values] + [(ADD_NEW, '+ Add new…')],
+                attrs={'class': 'tag-select', 'data-column': column},
+            )
+
+    def clean(self):
+        data = super().clean()
+        for field in Pin.TAG_FIELDS:
+            value = (data.get(field) or '').strip()
+            data[field] = '' if value == ADD_NEW else value
+        return data
 
 
 class BasePinFormSet(forms.BaseInlineFormSet):
     def __init__(self, *args, **kwargs):
         self._signals = list(Signal.objects.values_list('name', flat=True))
+        self._tag_options = TagOption.names()
         super().__init__(*args, **kwargs)
 
     def get_form_kwargs(self, index):
-        return {**super().get_form_kwargs(index), 'signals': self._signals}
+        return {**super().get_form_kwargs(index), 'signals': self._signals, 'tag_options': self._tag_options}
 
-    def clean(self):
-        super().clean()
-        seen = {}
+    def save_tag_options(self):
+        """Values added with "+ Add new…" join their column's list."""
         for form in self.forms:
-            if not hasattr(form, 'cleaned_data') or form.cleaned_data.get('DELETE'):
+            data = getattr(form, 'cleaned_data', None) or {}
+            if data.get('DELETE'):
                 continue
-            tag = (form.cleaned_data.get('tag') or '').strip()
-            if not tag:
-                continue
-            if tag.lower() in seen:
-                form.add_error('tag', f'Pin {seen[tag.lower()]} already has the tag {tag}; tags are unique within a connector.')
-            else:
-                seen[tag.lower()] = form.cleaned_data.get('label') or '?'
+            for column, field in enumerate(Pin.TAG_FIELDS, start=1):
+                if data.get(field):
+                    TagOption.objects.get_or_create(column=column, name=data[field])
 
 
 PinFormSet = forms.inlineformset_factory(
@@ -110,3 +125,18 @@ class SignalForm(forms.ModelForm):
         if Signal.objects.filter(name__iexact=name).exclude(pk=self.instance.pk).exists():
             raise forms.ValidationError(f'There is already a signal {name}.')
         return name
+
+
+class TagOptionForm(forms.ModelForm):
+    class Meta:
+        model = TagOption
+        fields = ['column', 'name']
+        widgets = {'name': forms.TextInput(attrs={'style': 'width: 14em'})}
+
+    def clean(self):
+        data = super().clean()
+        name = (data.get('name') or '').strip()
+        data['name'] = name
+        if name and data.get('column') and TagOption.objects.filter(column=data['column'], name__iexact=name).exclude(pk=self.instance.pk).exists():
+            self.add_error('name', f'Tag {data["column"]} already has {name}.')
+        return data

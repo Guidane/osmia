@@ -12,8 +12,8 @@ from assemblies.models import Assembly
 from core import hooks
 from core.trees import natural_key
 
-from .forms import ConnectorForm, DeviceForm, PinFormSet, SignalForm
-from .models import Connector, Device, Pin, PinMap, Signal
+from .forms import ConnectorForm, DeviceForm, PinFormSet, SignalForm, TagOptionForm
+from .models import Connector, Device, Pin, PinMap, Signal, TagOption
 
 
 class DeviceListView(LoginRequiredMixin, ListView):
@@ -39,6 +39,16 @@ class DeviceListView(LoginRequiredMixin, ListView):
         return super().get_context_data(**kwargs, origins=Device.Origin.choices, roles=Device.Role.choices)
 
 
+# What the pin table can be sorted by (?sort=tag2, or ?sort=-tag2 for descending).
+PIN_SORTS = {
+    'pin': lambda p: p.label,
+    'signal': lambda p: p.signal,
+    'tag1': lambda p: p.tag1, 'tag2': lambda p: p.tag2, 'tag3': lambda p: p.tag3, 'tag4': lambda p: p.tag4,
+    'set': lambda p: p.set_number,
+    'set_type': lambda p: p.get_set_type_display() if p.set_type else '',
+}
+
+
 class DeviceDetailView(LoginRequiredMixin, DetailView):
     """Sidebar with the device's connectors; the right side shows the chosen
     connector's pins (?connector=<id>) or, by default, the device details."""
@@ -54,12 +64,16 @@ class DeviceDetailView(LoginRequiredMixin, DetailView):
         if selected is not None:
             pins = list(selected.pins.all())
             sort = self.request.GET.get('sort', '')
-            if sort == 'tag':
-                # Tagged pins first, by tag; untagged ones after, in pin order.
-                pins.sort(key=lambda p: (not p.tag, natural_key(p.tag)))
-            elif sort == 'signal':
-                pins.sort(key=lambda p: (not p.signal, natural_key(p.signal)))
-            context.update(pins=pins, sort=sort)
+            key, descending = sort.lstrip('-'), sort.startswith('-')
+            if key in PIN_SORTS:
+                get = PIN_SORTS[key]
+                # Pins with a value first (in natural order, e.g. 2 before 10), empty ones last, in pin order.
+                filled = sorted((p for p in pins if get(p) not in ('', None)), key=lambda p: natural_key(str(get(p))), reverse=descending)
+                pins = filled + [p for p in pins if get(p) in ('', None)]
+            context.update(pins=pins, sort=sort, sort_key=key if key in PIN_SORTS else '', sort_desc=descending, sort_columns=[
+                ('pin', 'Pin'), ('signal', 'Signal'), ('tag1', 'Tag 1'), ('tag2', 'Tag 2'), ('tag3', 'Tag 3'), ('tag4', 'Tag 4'),
+                ('set', 'Set'), ('set_type', 'Set type'),
+            ])
         else:
             context.update(
                 versions=d.versions.select_related('created_by')[:20],
@@ -126,6 +140,7 @@ def connector_form(request, device_pk, pk=None):
             connector = form.save()
             formset.instance = connector
             formset.save(commit=False)
+            formset.save_tag_options()
             for pin in formset.deleted_objects:
                 pin.delete()
             deleted = set(formset.deleted_forms)
@@ -256,3 +271,43 @@ def pin_mapping(request, pk):
         'device': device, 'connectors': connectors,
         'maps': device.pin_maps.select_related('from_pin__connector', 'to_pin__connector'),
     })
+
+
+# -- The four tag columns' lists --------------------------------------------------------
+
+TagOptionFormSet = modelformset_factory(TagOption, form=TagOptionForm, extra=1, can_delete=True)
+
+
+@login_required
+def tags(request):
+    """The values each of the four tag columns offers (new ones are also added
+    from the pin editor's "+ Add new…")."""
+    formset = TagOptionFormSet(request.POST or None, queryset=TagOption.objects.all(), prefix='tags')
+    if request.method == 'POST' and formset.is_valid():
+        blocked = []
+        with transaction.atomic():
+            for form in formset.forms:
+                if not form.instance.pk and not form.cleaned_data.get('name'):
+                    continue
+                if form in formset.deleted_forms:
+                    if form.instance.pk:
+                        used = form.instance.usage()
+                        if used:
+                            blocked.append(f'{form.instance} ({used} pin{"s" if used != 1 else ""})')
+                        else:
+                            form.instance.delete()
+                    continue
+                if form.instance.pk:
+                    old = TagOption.objects.get(pk=form.instance.pk)
+                    if old.column != form.cleaned_data['column']:
+                        form.add_error('column', 'Move a tag by adding it to the other column instead.')
+                        continue
+                    old.rename(form.cleaned_data['name'])
+                else:
+                    form.save()
+        if blocked:
+            messages.error(request, 'Still used, so not deleted: ' + ', '.join(blocked) + '. Change those pins first.')
+        else:
+            messages.success(request, 'Tags saved.')
+        return redirect('devices:tags')
+    return render(request, 'devices/tags.html', {'formset': formset})

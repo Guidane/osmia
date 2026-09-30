@@ -6,7 +6,7 @@ from django.urls import reverse
 
 from assemblies.models import Assembly
 
-from .models import Connector, Device, PinMap, Signal
+from .models import Connector, Device, PinMap, Signal, TagOption
 
 
 class DeviceTestCase(TestCase):
@@ -24,7 +24,7 @@ class DeviceTests(DeviceTestCase):
         d = self.pdu.definition()
         self.assertEqual([c['id'] for c in d['connectors']], ['J01', 'J02'])
         self.assertEqual(d['connectors'][0]['pins'][1],
-                         {'id': '2', 'label': '13', 'signal': 'GND', 'tag': 'PWR_IN-', 'set': None, 'set_type': ''})
+                         {'id': '2', 'label': '13', 'signal': 'GND', 'tags': ['PWR_IN-', '', '', ''], 'set': None, 'set_type': ''})
         self.assertEqual(self.pdu.connectors.get(designator='J01').mating_designator, 'P01')
 
     def test_versions_only_on_change_and_can_be_restored(self):
@@ -129,7 +129,8 @@ class DeviceTests(DeviceTestCase):
         # Clicking a connector shows its pins instead.
         page = self.client.get(self.pdu.get_absolute_url() + f'?connector={j01.pk}')
         self.assertContains(page, 'Edit pins')
-        self.assertContains(page, '<td>13</td><td>GND</td><td><code>PWR_IN-</code></td>')
+        self.assertContains(page, '<td>13</td><td>GND</td>')
+        self.assertContains(page, '<td><code>PWR_IN-</code></td>')
         self.assertContains(page, 'DB25-F')
         self.assertNotContains(page, 'Versions</h2>')
         # Another device's connector id isn't shown here.
@@ -168,27 +169,57 @@ def connector_post(connector, pins, **extra):
     for i, (pin, values) in enumerate(pins):
         if pin:
             data.update({f'pins-{i}-id': pin.pk, f'pins-{i}-connector': connector.pk})
-            base = {'label': pin.label, 'signal': pin.signal, 'tag': pin.tag, 'set_number': pin.set_number or '', 'set_type': pin.set_type}
+            base = {'label': pin.label, 'signal': pin.signal, **pin.tag_fields(), 'set_number': pin.set_number or '', 'set_type': pin.set_type}
         else:
-            base = {'label': '', 'signal': '', 'tag': '', 'set_number': '', 'set_type': ''}
+            base = {'label': '', 'signal': '', 'tag1': '', 'tag2': '', 'tag3': '', 'tag4': '', 'set_number': '', 'set_type': ''}
         for k, v in {**base, **values}.items():
             data[f'pins-{i}-{k}'] = v
     return data
 
 
 class PinDetailsTests(DeviceTestCase):
-    def test_tags_are_unique_within_a_connector_only(self):
+    def test_four_tag_columns_with_their_own_lists(self):
         j02 = self.pdu.connectors.get(designator='J02')
         pins = list(j02.pins.all())
         url = reverse('devices:connector_edit', args=[self.pdu.pk, j02.pk])
-        resp = self.client.post(url, connector_post(j02, [(pins[0], {'tag': 'X'}), (pins[1], {'tag': 'x'}), (pins[2], {})]))
-        self.assertContains(resp, 'tags are unique within a connector')
-        # The same tag on another connector is fine.
+        page = self.client.get(url)
+        for column in range(1, 5):
+            self.assertContains(page, f'name="pins-0-tag{column}"')
+            self.assertContains(page, f'data-column="{column}"')
+        self.assertContains(page, '+ Add new…')
+        self.assertContains(page, '<option value="CAN1_H" selected>CAN1_H</option>')  # from the Tag 1 list
+        # A value typed with "+ Add new…" is saved and joins its column's list; repeats are fine.
+        resp = self.client.post(url, connector_post(j02, [
+            (pins[0], {'tag2': 'Bus A', 'tag4': 'Front'}), (pins[1], {'tag2': 'Bus A'}), (pins[2], {'tag3': '__new__'}),
+        ]))
+        self.assertRedirects(resp, j02.get_absolute_url())
+        self.assertEqual(list(j02.pins.values_list('tag2', flat=True)), ['Bus A', 'Bus A', ''])
+        self.assertEqual(j02.pins.get(label='3').tag3, '')  # "+ Add new…" without a value is ignored
+        self.assertEqual(TagOption.names()[2], ['Bus A'])
+        self.assertEqual(TagOption.names()[4], ['Front'])
+        self.assertIn('CAN1_H', TagOption.names()[1])
+        self.assertEqual(self.pdu.definition()['connectors'][1]['pins'][0]['tags'], ['CAN1_H', 'Bus A', '', 'Front'])
+        # Another connector's Tag 2 dropdown now offers it.
         j01 = self.pdu.connectors.get(designator='J01')
-        p = list(j01.pins.all())
-        self.client.post(reverse('devices:connector_edit', args=[self.pdu.pk, j01.pk]),
-                         connector_post(j01, [(p[0], {'tag': 'CAN1_H'})] + [(x, {}) for x in p[1:]]))
-        self.assertEqual(j01.pins.first().tag, 'CAN1_H')
+        self.assertContains(self.client.get(reverse('devices:connector_edit', args=[self.pdu.pk, j01.pk])), '<option value="Bus A">Bus A</option>')
+
+    def test_tags_page_renames_and_blocks_deleting_used_ones(self):
+        j01 = self.pdu.connectors.get(designator='J01')
+        j01.pins.filter(label='1').update(tag3='Left')
+        TagOption.objects.create(column=3, name='Left')
+        TagOption.objects.create(column=3, name='Unused')
+        options = list(TagOption.objects.all())
+        data = {'tags-TOTAL_FORMS': len(options), 'tags-INITIAL_FORMS': len(options), 'tags-MIN_NUM_FORMS': 0, 'tags-MAX_NUM_FORMS': 1000}
+        for i, o in enumerate(options):
+            data.update({f'tags-{i}-id': o.pk, f'tags-{i}-column': o.column, f'tags-{i}-name': 'Port side' if o.name == 'Left' else o.name})
+            if o.name in ('Unused', 'PWR_IN+'):
+                data[f'tags-{i}-DELETE'] = 'on'
+        resp = self.client.post(reverse('devices:tags'), data, follow=True)
+        self.assertContains(resp, 'Still used, so not deleted: Tag 1: PWR_IN+')
+        self.assertEqual(j01.pins.get(label='1').tag3, 'Port side')
+        self.assertFalse(TagOption.objects.filter(name='Unused').exists())
+        self.assertTrue(TagOption.objects.filter(name='PWR_IN+').exists())
+        self.assertContains(self.client.get(reverse('devices:list')), reverse('devices:tags'))
 
     def test_sets_gender_details_and_signal_list(self):
         j02 = self.pdu.connectors.get(designator='J02')
@@ -209,11 +240,21 @@ class PinDetailsTests(DeviceTestCase):
         self.assertNotContains(page, '<th class="num">#</th>')
         self.assertNotContains(self.client.get(reverse('devices:connector_edit', args=[self.pdu.pk, j02.pk])), 'add_pins')
 
-    def test_sort_by_tag(self):
+    def test_every_pin_column_sorts_both_ways(self):
         j01 = self.pdu.connectors.get(designator='J01')
-        page = self.client.get(j01.get_absolute_url() + '&sort=tag')
-        tags = [p.tag for p in page.context['pins']]
-        self.assertEqual(tags, sorted(tags))
+        j01.pins.filter(label='1').update(tag2='b', set_number=2)
+        j01.pins.filter(label='13').update(tag2='a', set_number=10)
+        base = j01.get_absolute_url()
+        pins = lambda sort: [p.label for p in self.client.get(base + f'&sort={sort}').context['pins']]
+        self.assertEqual(pins('tag1'), ['2', '14', '1', '13'])      # PWR_AUX+, PWR_AUX-, PWR_IN+, PWR_IN-
+        self.assertEqual(pins('-tag1'), ['13', '1', '14', '2'])
+        self.assertEqual(pins('tag2'), ['13', '1', '2', '14'])      # a, b, then the pins without one
+        self.assertEqual(pins('-tag2'), ['1', '13', '2', '14'])     # still empty last
+        self.assertEqual(pins('set'), ['1', '13', '2', '14'])       # 2 before 10
+        self.assertEqual(pins('pin'), ['1', '2', '13', '14'])
+        page = self.client.get(base + '&sort=tag2')
+        for key in ('pin', 'signal', 'tag1', 'tag2', 'tag3', 'tag4', 'set', 'set_type'):
+            self.assertContains(page, f'sort={key}"' if key != 'tag2' else 'sort=-tag2"')
 
     def test_signals_page_renames_everywhere_and_blocks_deleting_used_ones(self):
         from harness.models import SignalRule
@@ -241,8 +282,8 @@ class PinDetailsTests(DeviceTestCase):
         resp = self.client.post(reverse('devices:connector_clone', args=[self.pdu.pk, j02.pk]))
         copy = self.pdu.connectors.get(designator='J03')
         self.assertRedirects(resp, reverse('devices:connector_edit', args=[self.pdu.pk, copy.pk]))
-        self.assertEqual(list(copy.pins.values_list('label', 'signal', 'tag', 'set_number')),
-                         list(j02.pins.values_list('label', 'signal', 'tag', 'set_number')))
+        self.assertEqual(list(copy.pins.values_list('label', 'signal', 'tag1', 'tag2', 'set_number')),
+                         list(j02.pins.values_list('label', 'signal', 'tag1', 'tag2', 'set_number')))
         self.assertEqual(copy.part, j02.part)
         self.pdu.refresh_from_db()
         self.assertEqual(self.pdu.version, 2)
@@ -285,6 +326,6 @@ class InterconnectTests(DeviceTestCase):
         self.assertTrue(ext.is_interconnect)
         inp, out = ext.connectors.get(designator='J01'), ext.connectors.get(designator='J02')
         self.assertEqual((inp.gender, out.gender, out.part), ('pin', 'socket', j02.part))
-        self.assertEqual(list(out.pins.values_list('label', 'signal', 'tag')), list(j02.pins.values_list('label', 'signal', 'tag')))
+        self.assertEqual(list(out.pins.values_list('label', 'signal', 'tag1')), list(j02.pins.values_list('label', 'signal', 'tag1')))
         self.assertEqual(ext.pin_maps.count(), j02.pins.count())
         self.assertEqual(ext.version, 1)
