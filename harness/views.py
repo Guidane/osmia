@@ -5,6 +5,7 @@ designer.js). Devices and users come from Osmia's Devices and Users modules and
 are read-only here: devices are created and edited only in the Devices module.
 """
 import json
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
@@ -200,6 +201,8 @@ def api_order(request):
     order = Order.objects.create(created_by=request.user, notes=note)
     for number, qty in wanted.items():
         if number in parts:
-            OrderLine.objects.create(order=order, part=parts[number], quantity=qty, unit_price=parts[number].cost)
+            stock = getattr(parts[number], 'stock', None)  # the Stock module's average cost, if it knows one
+            price = stock.average_cost.quantize(Decimal('0.01')) if stock else Decimal(0)
+            OrderLine.objects.create(order=order, part=parts[number], quantity=qty, unit_price=price)
     return JsonResponse({'number': order.number, 'url': order.get_absolute_url(), 'missing': missing,
                          'lines': sum(1 for n in wanted if n in parts)})

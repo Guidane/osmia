@@ -19,9 +19,8 @@ def _signals():
     """The shared signal list gets every signal the demo pins use."""
     for name in sorted(set(Pin.objects.exclude(signal='').values_list('signal', flat=True))):
         Signal.objects.get_or_create(name=name)
-    for column, field in enumerate(Pin.TAG_FIELDS, start=1):
-        for name in sorted(set(Pin.objects.exclude(**{field: ''}).values_list(field, flat=True))):
-            TagOption.objects.get_or_create(column=column, name=name)
+    for connector in Connector.objects.all():
+        TagOption.from_pins(connector)  # each connector's own tag lists
 
 
 def _network_demo():

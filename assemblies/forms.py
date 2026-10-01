@@ -17,38 +17,56 @@ class AssemblyForm(forms.ModelForm):
         }
 
 
-def component_choices(assembly):
-    """Grouped choices: ``p:<id>`` for parts and ``a:<id>`` for sub-assemblies.
-
-    Assemblies that already contain this one are left out, since adding them
-    would create a cycle.
-    """
-    in_use = set(assembly.components.values_list('part_id', flat=True)) if assembly.pk else set()
-    parts = Part.objects.filter(is_active=True) | Part.objects.filter(pk__in=in_use - {None})
+def allowed_sub_assemblies(assembly):
+    """Assemblies that can go into this one: not itself, nor any that already
+    contain it (that would make the nesting loop)."""
     assemblies = Assembly.objects.all()
     if assembly.pk:
         assemblies = assemblies.exclude(pk__in={assembly.pk, *assembly.ancestor_ids()})
-    return [
-        ('', '(choose)'),
-        ('Parts', [(f'p:{p.pk}', str(p)) for p in parts.distinct().order_by('part_number')]),
-        ('Sub-assemblies', [(f'a:{a.pk}', str(a)) for a in assemblies]),
-    ]
+    return assemblies
 
 
 class ComponentForm(forms.Form):
-    component = forms.ChoiceField(required=False)
+    """One BOM row: ``p:<id>`` for a part (picked with the part picker) or
+    ``a:<id>`` for a sub-assembly."""
+    component = forms.CharField(required=False, widget=forms.HiddenInput)
     quantity = forms.DecimalField(min_value=Decimal('0.001'), decimal_places=3, initial=1, required=False)
 
-    def __init__(self, *args, choices=(), **kwargs):
+    def __init__(self, *args, allowed_assemblies=(), **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['component'].choices = choices
+        self.allowed_assemblies = set(allowed_assemblies)
         self.fields['quantity'].widget.attrs.update(step='any', style='width: 7em')
+
+    def clean_component(self):
+        ref = (self.cleaned_data.get('component') or '').strip()
+        if not ref:
+            return ''
+        kind, _, obj_id = ref.partition(':')
+        if kind == 'p' and obj_id.isdigit() and Part.objects.filter(pk=obj_id).exists():
+            return ref
+        if kind == 'a' and obj_id.isdigit() and int(obj_id) in self.allowed_assemblies:
+            return ref
+        raise forms.ValidationError("That component can't be used here.")
 
     def clean(self):
         data = super().clean()
         if data.get('component') and not data.get('quantity'):
             self.add_error('quantity', 'Enter a quantity.')
         return data
+
+    def ref(self):
+        return str((self.data.get(self.add_prefix('component')) if self.is_bound else self.initial.get('component')) or '')
+
+    def target(self):
+        """The part or assembly the row stands for, for showing it."""
+        kind, _, obj_id = self.ref().partition(':')
+        if not obj_id.isdigit():
+            return None
+        model = Part if kind == 'p' else Assembly if kind == 'a' else None
+        return model.objects.filter(pk=obj_id).first() if model else None
+
+    def is_assembly(self):
+        return self.ref().startswith('a:')
 
 
 class BaseComponentFormSet(forms.BaseFormSet):
@@ -75,7 +93,7 @@ class BaseComponentFormSet(forms.BaseFormSet):
                 yield form.cleaned_data['component'], form.cleaned_data['quantity']
 
 
-ComponentFormSet = forms.formset_factory(ComponentForm, formset=BaseComponentFormSet, extra=2, can_delete=True)
+ComponentFormSet = forms.formset_factory(ComponentForm, formset=BaseComponentFormSet, extra=0, can_delete=True)
 
 
 class LinkTaskForm(forms.Form):

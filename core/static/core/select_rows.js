@@ -15,7 +15,8 @@
   function update() {
     const chosen = new Set(boxes().filter(b => b.checked).map(b => b.value));
     boxes().forEach(b => b.closest('tr').classList.toggle('selected', b.checked));
-    count.textContent = chosen.size ? `${chosen.size} part${chosen.size === 1 ? '' : 's'} selected` : idle;
+    const noun = bar.dataset.noun || "part";
+    count.textContent = chosen.size ? `${chosen.size} ${noun}${chosen.size === 1 ? "" : "s"} selected` : idle;
     submit.disabled = !chosen.size;
     if (clear) clear.hidden = !chosen.size;
     tables.forEach(t => {

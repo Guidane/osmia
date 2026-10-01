@@ -8,6 +8,7 @@ from django.urls import reverse
 from assemblies.models import Assembly
 from core import automation
 from inventory.models import Part
+from stock.models import PartStock, StockItem, on_hand
 from orders.models import Order
 from tasks.models import Task, TaskBatch
 from users.models import User
@@ -38,7 +39,7 @@ class AutomationTestCase(TestCase):
 class ChainTests(AutomationTestCase):
     def test_placing_an_order_creates_tasks_and_finishing_them_receives_it(self):
         part = Part.objects.get(part_number='DB25-F')
-        before = part.quantity_on_hand
+        before = on_hand(part)
         self.order.set_status(Order.Status.PLACED)
 
         tasks = list(Task.objects.filter(batch__rule_id=self.check_in.pk))
@@ -58,7 +59,7 @@ class ChainTests(AutomationTestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.Status.RECEIVED)
         part.refresh_from_db()
-        self.assertEqual(part.quantity_on_hand, before + 20)
+        self.assertEqual(on_hand(part), before + 20)
         run = Run.objects.get(rule=self.receive)
         self.assertEqual(run.status, Run.Status.OK)
         self.assertEqual(run.source_label, str(self.order))
@@ -125,20 +126,19 @@ class ConditionTests(AutomationTestCase):
 class ActionTests(AutomationTestCase):
     def test_stock_move_and_low_stock_trigger(self):
         part = Part.objects.get(part_number='DB25-M')
-        part.reorder_level = part.quantity_on_hand - 1
-        part.save()
-        Rule.objects.create(name='Low', trigger='inventory.stock_low', actions=[
+        PartStock.objects.filter(part=part).update(reorder_level=on_hand(part) - 1)
+        Rule.objects.create(name='Low', trigger='stock.stock_low', actions=[
             {'action': 'automations.notify', 'params': {'users': [self.alice.pk], 'message': '{object} is low'}},
         ])
         rule = Rule.objects.create(name='Issue', trigger='assemblies.completed', actions=[
-            {'action': 'inventory.stock_move', 'params': {'part': part.pk, 'direction': 'out', 'quantity': '2', 'note': 'For {object}'}},
+            {'action': 'stock.stock_move', 'params': {'part': part.pk, 'direction': 'out', 'quantity': '2', 'note': 'For {object}'}},
         ])
-        before = part.quantity_on_hand
+        before = on_hand(part)
         assembly = Assembly.objects.filter(status=Assembly.Status.MANUFACTURING).first()
         assembly.status = Assembly.Status.COMPLETED
         assembly.save()
         part.refresh_from_db()
-        self.assertEqual(part.quantity_on_hand, before - 2)
+        self.assertEqual(on_hand(part), before - 2)
         self.assertEqual(Run.objects.get(rule=rule).status, Run.Status.OK)
         self.assertTrue(Notification.objects.filter(message__endswith='is low').exists())
 

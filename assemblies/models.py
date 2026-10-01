@@ -105,15 +105,20 @@ class Assembly(models.Model):
             if part is not None:
                 totals[part.pk] += row['total']
                 parts[part.pk] = part
+        from django.db.models import Sum
+
+        from stock.models import StockItem
+        stocked = dict(StockItem.objects.filter(part_id__in=totals).values_list('part').annotate(t=Sum('quantity')))
         result = []
         for pk, needed in totals.items():
             part = parts[pk]
+            have = stocked.get(pk) or Decimal(0)
             result.append({
                 'part': part,
                 'needed': needed,
-                'on_hand': part.quantity_on_hand,
-                'short': max(needed - part.quantity_on_hand, Decimal(0)),
-                'builds': int(part.quantity_on_hand // needed) if needed else None,
+                'on_hand': have,
+                'short': max(needed - have, Decimal(0)),
+                'builds': int(have // needed) if needed else None,
             })
         return sorted(result, key=lambda r: r['part'].part_number)
 

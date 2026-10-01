@@ -10,7 +10,7 @@ from django.views.generic import DetailView, ListView
 from core import hooks
 from tasks.models import Task
 
-from .forms import AssemblyForm, ComponentFormSet, LinkTaskForm, component_choices
+from .forms import AssemblyForm, ComponentFormSet, LinkTaskForm, allowed_sub_assemblies
 from .models import Assembly, AssemblyComponent, TaskLink
 
 
@@ -55,15 +55,16 @@ def assembly_form(request, pk=None):
     assembly = get_object_or_404(Assembly, pk=pk) if pk else Assembly()
     # Taken before binding: ModelForm validation copies posted values onto the instance.
     before = (assembly.bom_signature(), assembly.version) if pk else None
-    choices = component_choices(assembly)
+    sub_assemblies = list(allowed_sub_assemblies(assembly))
+    kwargs = {'allowed_assemblies': [a.pk for a in sub_assemblies]}
     form = AssemblyForm(request.POST or None, instance=assembly)
     if request.method == 'POST':
         # No initial here: rows matching their initial value would count as
         # "unchanged" and be skipped, silently dropping them from the BOM.
-        formset = ComponentFormSet(request.POST, prefix='components', form_kwargs={'choices': choices})
+        formset = ComponentFormSet(request.POST, prefix='components', form_kwargs=kwargs)
     else:
         initial = [{'component': c.ref, 'quantity': c.quantity} for c in assembly.components.all()] if pk else []
-        formset = ComponentFormSet(initial=initial, prefix='components', form_kwargs={'choices': choices})
+        formset = ComponentFormSet(initial=initial, prefix='components', form_kwargs=kwargs)
     if request.method == 'POST' and form.is_valid() and formset.is_valid():
         with transaction.atomic():
             assembly = form.save()
@@ -79,7 +80,7 @@ def assembly_form(request, pk=None):
         messages.success(request, 'Assembly saved.')
         return redirect(assembly)
     return render(request, 'assemblies/assembly_form.html', {
-        'form': form, 'formset': formset, 'assembly': assembly,
+        'form': form, 'formset': formset, 'assembly': assembly, 'sub_assemblies': sub_assemblies,
         'heading': f'Edit {assembly}' if pk else 'New assembly',
     })
 

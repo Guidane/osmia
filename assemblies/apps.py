@@ -9,7 +9,7 @@ class AssembliesConfig(OsmiaModuleConfig):
         description='Bills of materials built from parts and sub-assemblies.',
         icon='🧩',
         sequence=40,
-        depends=('inventory', 'tasks'),
+        depends=('inventory', 'stock', 'tasks'),
         menu=(
             MenuItem('Assemblies', 'assemblies:list'),
             MenuItem('New assembly', 'assemblies:create'),

@@ -1,32 +1,13 @@
-from decimal import Decimal
-
 from django import forms
 
 from core.trees import TreeNodeForm
-from tasks.models import Task
 
-from .models import Attribute, Category, Location, Part, PartAttributeValue, StockMove
+from .models import Attribute, Category, Part, PartAttributeValue
 
 
 class CategoryForm(TreeNodeForm):
     class Meta(TreeNodeForm.Meta):
         model = Category
-
-
-class LocationForm(TreeNodeForm):
-    class Meta(TreeNodeForm.Meta):
-        model = Location
-        fields = ['name', 'label', 'parent']
-
-    def clean(self):
-        data = super().clean()
-        label = (data.get('label') or '').strip()
-        data['label'] = label
-        if label:
-            clash = Location.objects.filter(parent=data.get('parent'), label__iexact=label).exclude(pk=self.instance.pk).first()
-            if clash:
-                self.add_error('label', f'"{clash.name}" in the same place already has the label {clash.label}.')
-        return data
 
 
 AttributeFormSet = forms.inlineformset_factory(
@@ -41,16 +22,28 @@ class PartForm(forms.ModelForm):
     selected category, and only those are saved.
     """
 
+    BASE_FIELDS = ['part_number', 'name', 'category', 'unit', 'is_active']
+    LINK_FIELDS = ['mates_with', 'fits', 'tools']
+
     class Meta:
         model = Part
-        fields = [
-            'part_number', 'name', 'category', 'location', 'unit', 'cost', 'reorder_level', 'is_active',
-        ]
+        fields = ['part_number', 'name', 'category', 'unit', 'is_active', 'mates_with', 'fits', 'tools']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['category'].queryset = Category.objects.select_related('parent')
-        self.fields['location'].queryset = Location.objects.select_related('parent')
+        others = Part.objects.exclude(pk=self.instance.pk) if self.instance.pk else Part.objects.all()
+        for name in ('mates_with', 'fits'):
+            # Picked with the part picker on the page; the select holds the choice.
+            self.fields[name].queryset = others
+            self.fields[name].widget.attrs.update({'hidden': True, 'class': 'part-links'})
+        # Active tools, plus retired ones the part already uses.
+        from tools.models import Tool
+        tools = Tool.objects.filter(is_active=True)
+        if self.instance.pk:
+            tools = (tools | self.instance.tools.all()).distinct()
+        self.fields['tools'].widget = forms.CheckboxSelectMultiple()
+        self.fields['tools'].queryset = tools
         current = {}
         if self.instance.pk:
             current = {v.attribute_id: v.value for v in self.instance.attribute_values.all()}
@@ -67,7 +60,7 @@ class PartForm(forms.ModelForm):
             self.attribute_groups[-1]['fields'].append(name)
 
     def base_fields_bound(self):
-        return [self[name] for name in self._meta.fields]
+        return [self[name] for name in self.BASE_FIELDS]
 
     def attribute_fields_bound(self):
         return [
@@ -81,6 +74,19 @@ class PartForm(forms.ModelForm):
             self.save_attribute_values(part)
         return part
 
+    def mates_with_linked(self):
+        return self.linked('mates_with')
+
+    def fits_linked(self):
+        return self.linked('fits')
+
+    def linked(self, name):
+        """The parts currently picked in a link field, for the page to show."""
+        if self.is_bound:
+            ids = [i for i in self.data.getlist(name) if str(i).isdigit()] if hasattr(self.data, 'getlist') else []
+            return list(Part.objects.filter(pk__in=ids))
+        return list(getattr(self.instance, name).all()) if self.instance.pk else []
+
     def save_attribute_values(self, part):
         valid = set(part.category.attributes.values_list('pk', flat=True)) if part.category else set()
         # Values for attributes outside the part's category no longer apply.
@@ -93,37 +99,15 @@ class PartForm(forms.ModelForm):
                 part.attribute_values.filter(attribute_id=attr_id).delete()
 
 
-class StockMoveForm(forms.Form):
-    part = forms.ModelChoiceField(Part.objects.filter(is_active=True))
-    # Transfers are made by selecting rows and picking a location, not here.
-    move_type = forms.ChoiceField(label='Type', choices=[c for c in StockMove.Type.choices if c[0] != StockMove.Type.TRANSFER])
-    quantity = forms.DecimalField(
-        min_value=Decimal('0'), decimal_places=2,
-        help_text='For receipts and issues, the amount moved. For adjustments, the counted quantity on hand.',
-    )
-    task = forms.ModelChoiceField(
-        Task.objects.exclude(status=Task.Status.DONE), required=False,
-        help_text='Optional: the task these materials are for.',
-    )
-    note = forms.CharField(max_length=255, required=False)
+class QuickPartForm(forms.ModelForm):
+    """Just enough to start a part on the fly (e.g. while making an order)."""
 
-    def clean(self):
-        data = super().clean()
-        part, move_type, qty = data.get('part'), data.get('move_type'), data.get('quantity')
-        if part is None or qty is None:
-            return data
-        if move_type in (StockMove.Type.IN, StockMove.Type.OUT) and qty == 0:
-            self.add_error('quantity', 'Enter a quantity greater than zero.')
-        if move_type == StockMove.Type.OUT and qty > part.quantity_on_hand:
-            self.add_error('quantity', f'Only {part.quantity_on_hand} {part.unit} on hand.')
-        return data
+    class Meta:
+        model = Part
+        fields = ['part_number', 'name']
 
-    def save(self, user):
-        d = self.cleaned_data
-        part, qty = d['part'], d['quantity']
-        delta = {
-            StockMove.Type.IN: qty,
-            StockMove.Type.OUT: -qty,
-            StockMove.Type.ADJUST: qty - part.quantity_on_hand,
-        }[d['move_type']]
-        return StockMove.record(part, d['move_type'], delta, task=d['task'], note=d['note'], user=user)
+    def clean_part_number(self):
+        number = self.cleaned_data['part_number'].strip()
+        if Part.objects.filter(part_number__iexact=number).exists():
+            raise forms.ValidationError(f'There is already a part {number}.')
+        return number

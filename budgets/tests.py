@@ -5,7 +5,8 @@ from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
-from inventory.models import Part, StockMove
+from inventory.models import Part
+from stock.models import PartStock, StockMove
 from tasks.models import Task
 from departments.models import Department
 from users.models import User
@@ -38,10 +39,9 @@ class BudgetTests(DemoDataTestCase):
 
     def test_cost_is_fixed_when_moved_and_returns_reduce_it(self):
         belt = Part.objects.get(part_number='BELT-C2')
-        belt.cost = Decimal('500.00')
-        belt.save()
+        PartStock.objects.filter(part=belt).update(average_cost=Decimal('500.00'))  # e.g. a pricier batch came in
         self.assertEqual(Spending().own[self.budgets['B-OPS-FS'].pk], Decimal('89.00'))
-        StockMove.record(belt, StockMove.Type.IN, 1, task=self.repair, note='Returned')  # at 500.00
+        StockMove.record(belt, StockMove.Type.IN, 1, task=self.repair, note='Returned')  # at the average cost, 500.00
         self.assertEqual(Spending().own[self.budgets['B-OPS-FS'].pk], Decimal('-411.00'))
 
     def test_budget_must_match_task_department(self):

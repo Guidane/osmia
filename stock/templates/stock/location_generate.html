@@ -42,11 +42,11 @@
 
     <div class="actions">
       <button class="btn primary" id="gen-submit">Generate</button>
-      <a class="btn" href="{% if parent %}{{ parent.get_absolute_url }}{% else %}{% url 'inventory:location_list' %}{% endif %}">Cancel</a>
+      <a class="btn" href="{% if parent %}{{ parent.get_absolute_url }}{% else %}{% url 'stock:location_list' %}{% endif %}">Cancel</a>
     </div>
   </form>
 </div>
 {{ codes|json_script:"gen-parent-codes" }}
 <script>window.GEN_MAX = {{ max_locations }};</script>
-<script src="{% versioned_static 'inventory/location_generate.js' %}"></script>
+<script src="{% versioned_static 'stock/location_generate.js' %}"></script>
 {% endblock %}

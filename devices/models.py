@@ -140,6 +140,8 @@ class Device(models.Model):
                 )
                 for p_index, p in enumerate(c.get('pins') or [])
             )
+        for connector in self.connectors.all():
+            TagOption.from_pins(connector)
         pins = {(p.connector.designator, str(p.position)): p for p in Pin.objects.filter(connector__device=self).select_related('connector')}
         for row in data.get('pin_map') or []:
             if len(row) == 4 and (row[0], row[1]) in pins and (row[2], row[3]) in pins:
@@ -202,6 +204,7 @@ class Device(models.Model):
                 set_number=p.set_number, set_type=p.set_type)
             for p in connector.pins.all()
         )
+        TagOption.objects.bulk_create(TagOption(connector=copy, column=o.column, name=o.name) for o in connector.tag_options.all())
         return copy
 
     @classmethod
@@ -227,6 +230,8 @@ class Device(models.Model):
             a = Pin.objects.create(connector=inp, **kw)
             b = Pin.objects.create(connector=out, **kw)
             PinMap.objects.create(device=ext, from_pin=a, to_pin=b)
+        for c in (inp, out):
+            TagOption.from_pins(c)
         ext.snapshot(user)
         return ext
 
@@ -361,40 +366,37 @@ class PinMap(models.Model):
 
 
 class TagOption(models.Model):
-    """A value that can be picked in one of the four pin tag columns."""
+    """A value offered in one of a connector's tag columns. Tags are local to
+    the connector: each connector has its own lists (signals are global)."""
 
+    connector = models.ForeignKey('Connector', on_delete=models.CASCADE, related_name='tag_options')
     column = models.PositiveSmallIntegerField(choices=[(i, f'Tag {i}') for i in range(1, 5)])
     name = models.CharField(max_length=50)
+    audit_log = False  # follows the pins' tags, which are logged
 
     class Meta:
         ordering = ['column', 'name']
-        constraints = [models.UniqueConstraint(fields=['column', 'name'], name='unique_tag_option')]
+        constraints = [models.UniqueConstraint(fields=['connector', 'column', 'name'], name='unique_tag_option_per_connector')]
 
     def __str__(self):
-        return f'Tag {self.column}: {self.name}'
-
-    @property
-    def field(self):
-        return f'tag{self.column}'
-
-    def usage(self):
-        return Pin.objects.filter(**{self.field: self.name}).count()
-
-    @transaction.atomic
-    def rename(self, new_name):
-        old = self.name
-        self.name = new_name
-        self.save()
-        if old != new_name:
-            Pin.objects.filter(**{self.field: old}).update(**{self.field: new_name})
+        return f'{self.connector} Tag {self.column}: {self.name}'
 
     @classmethod
-    def names(cls):
-        """{column: [names]} for all four columns."""
+    def names_for(cls, connector):
+        """{column: [names]} of a connector's four tag columns."""
         out = {i: [] for i in range(1, 5)}
-        for column, name in cls.objects.values_list('column', 'name'):
-            out[column].append(name)
+        if connector is not None and connector.pk:
+            for column, name in cls.objects.filter(connector=connector).values_list('column', 'name'):
+                out[column].append(name)
         return out
+
+    @classmethod
+    def from_pins(cls, connector):
+        """Make sure every tag the connector's pins use is in its lists."""
+        for pin in connector.pins.all():
+            for column, value in enumerate(pin.tags, start=1):
+                if value:
+                    cls.objects.get_or_create(connector=connector, column=column, name=value)
 
 
 class Signal(models.Model):

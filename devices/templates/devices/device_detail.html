@@ -8,6 +8,7 @@
     <span class="badge">v{{ d.version }}</span></h1>
   {% if d.is_interconnect %}<a class="btn" href="{% url 'devices:pin_mapping' d.pk %}">Pin mapping</a>{% endif %}
   <a class="btn" href="{% url 'devices:edit' d.pk %}">Edit device</a>
+  <a class="btn" href="{% url 'devices:delete' d.pk %}">Remove</a>
 </div>
 
 <div class="device-layout">

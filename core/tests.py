@@ -7,7 +7,8 @@ from django.urls import reverse
 
 from core.apps import check_module_dependencies
 from core.modules import dependency_order
-from inventory.models import Part, StockMove
+from inventory.models import Part
+from stock.models import StockItem, StockMove, on_hand
 from assemblies.models import Assembly
 from tasks.models import Task
 from users.models import User
@@ -41,6 +42,7 @@ class PageSmokeTests(TestCase):
         user = User.objects.get(username='carla')
         task = Task.objects.get(title__startswith='Repair conveyor')
         part = Part.objects.get(part_number='BELT-C2')
+        location = StockItem.objects.filter(part=part).first().location
         urls = [
             reverse('core:home'),
             reverse('users:list'), reverse('users:create'),
@@ -50,15 +52,16 @@ class PageSmokeTests(TestCase):
             reverse('tasks:gantt') + '?weeks=abc&start=garbage', reverse('tasks:mine'), reverse('tasks:create'),
             reverse('tasks:detail', args=[task.pk]), reverse('tasks:edit', args=[task.pk]),
             reverse('tasks:delete', args=[task.pk]),
-            reverse('inventory:part_list') + '?low=1&q=steel m8', reverse('inventory:part_create'),
+            reverse('inventory:part_list') + '?q=steel m8', reverse('inventory:part_create'),
             reverse('inventory:part_detail', args=[part.pk]),
             reverse('inventory:part_edit', args=[part.pk]),
-            reverse('inventory:move_list'), reverse('inventory:move_create') + f'?task={task.pk}',
+            reverse('stock:list'), reverse('stock:move_list'), reverse('stock:move_create') + f'?task={task.pk}',
             reverse('inventory:category_list'), reverse('inventory:category_create'),
             reverse('inventory:category_edit', args=[part.category_id]),
-            reverse('inventory:location_list'), reverse('inventory:location_create'),
-            reverse('inventory:location_edit', args=[part.location_id]),
-            reverse('inventory:location_detail', args=[part.location_id]),
+            reverse('stock:location_list'), reverse('stock:location_create'),
+            reverse('stock:location_edit', args=[location.pk]),
+            reverse('stock:location_detail', args=[location.pk]),
+            reverse('tools:list'), reverse('tools:create'),
             reverse('assemblies:list'), reverse('assemblies:create'),
         ] + [reverse(name, args=[a.pk]) for a in Assembly.objects.all() for name in ('assemblies:detail', 'assemblies:edit')]
         for url in urls:
@@ -67,7 +70,7 @@ class PageSmokeTests(TestCase):
 
     def test_home_shows_only_modules(self):
         resp = self.client.get(reverse('core:home'))
-        for title in ('Users', 'Tasks', 'Inventory', 'Assemblies', 'Budgets', 'Devices', 'Harness'):
+        for title in ('Users', 'Tasks', 'Parts', 'Stock', 'Tools', 'Assemblies', 'Budgets', 'Devices', 'Harness'):
             self.assertContains(resp, f'<strong>{title}</strong>')
         self.assertNotContains(resp, 'class="widget')
         self.assertNotContains(resp, 'Depends on')
@@ -77,7 +80,7 @@ class PageSmokeTests(TestCase):
         carla = User.objects.get(username='carla')
         resp = self.client.get(reverse('users:detail', args=[carla.pk]))
         self.assertContains(resp, 'Open tasks')          # from tasks
-        self.assertContains(resp, 'Recent stock moves')  # from inventory
+        self.assertContains(resp, 'Recent stock moves')  # from stock
         task = Task.objects.get(title__startswith='Repair conveyor')
         resp = self.client.get(reverse('tasks:detail', args=[task.pk]))
         self.assertContains(resp, 'Materials')
@@ -111,19 +114,19 @@ class PageSmokeTests(TestCase):
 
     def test_stock_moves_update_quantity(self):
         part = Part.objects.get(part_number='NUT-M8')
-        url = reverse('inventory:move_create')
-        self.client.post(url, {'part': part.pk, 'move_type': 'in', 'quantity': '50'})
-        part.refresh_from_db()
-        self.assertEqual(part.quantity_on_hand, 200)
-        self.client.post(url, {'part': part.pk, 'move_type': 'adjust', 'quantity': '180'})
-        part.refresh_from_db()
-        self.assertEqual(part.quantity_on_hand, 180)
+        where = StockItem.objects.get(part=part).location
+        url = reverse('stock:move_create')
+        self.client.post(url, {'part': part.pk, 'move_type': 'in', 'location': where.pk, 'quantity': '50'})
+        self.assertEqual(on_hand(part), 200)
+        self.client.post(url, {'part': part.pk, 'move_type': 'adjust', 'location': where.pk, 'quantity': '180'})
+        self.assertEqual(on_hand(part), 180)
         self.assertEqual(part.moves.first().delta, -20)
 
     def test_cannot_issue_more_than_on_hand(self):
         part = Part.objects.get(part_number='BAT-FL48')
-        resp = self.client.post(reverse('inventory:move_create'), {'part': part.pk, 'move_type': 'out', 'quantity': '5'})
-        self.assertContains(resp, 'Only 1.00 pcs on hand')
+        where = StockItem.objects.get(part=part).location
+        resp = self.client.post(reverse('stock:move_create'), {'part': part.pk, 'move_type': 'out', 'location': where.pk, 'quantity': '5'})
+        self.assertContains(resp, 'Only 1 pcs at')
         self.assertEqual(part.moves.count(), 1)
 
     def test_member_cannot_edit_other_users(self):
@@ -255,7 +258,7 @@ class ImageTests(TestCase):
 
     def test_galleries_on_every_page(self):
         records = [
-            self.part, self.part.location, Task.objects.first(), User.objects.get(username='carla'), Device.objects.first(),
+            self.part, StockItem.objects.filter(part=self.part).first().location, Task.objects.first(), User.objects.get(username='carla'), Device.objects.first(),
             Assembly.objects.first(), HarnessProject.objects.create(name='Bench harness'),
         ]
         for record in records:
@@ -263,7 +266,7 @@ class ImageTests(TestCase):
                 self.upload(record, picture(size=(80, 80)))
                 page = reverse('harness:project_images', args=[record.pk]) if isinstance(record, HarnessProject) else record.get_absolute_url()
                 self.assertContains(self.client.get(page), record.images.get().thumb_url)
-        for url in (reverse('inventory:part_list'), reverse('inventory:location_list'), reverse('users:list'), reverse('devices:list'),
+        for url in (reverse('inventory:part_list'), reverse('stock:location_list'), reverse('users:list'), reverse('devices:list'),
                     reverse('assemblies:list'), reverse('harness:list')):
             with self.subTest(url=url):
                 self.assertContains(self.client.get(url), '?thumb=1')

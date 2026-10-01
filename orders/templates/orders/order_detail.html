@@ -7,9 +7,7 @@
   {% if can_place %}
     <form method="post" action="{% url 'orders:set_status' o.pk %}">{% csrf_token %}<button class="btn primary" name="status" value="placed">Place order</button></form>
   {% endif %}
-  {% if can_receive %}
-    <form method="post" action="{% url 'orders:set_status' o.pk %}" onsubmit="return confirm('Receive {{ o.number }}? Its parts are booked into stock.')">{% csrf_token %}<button class="btn primary" name="status" value="received">Receive into stock</button></form>
-  {% endif %}
+  {% if can_receive %}<a class="btn primary" href="{% url 'orders:receive' o.pk %}">Receive…</a>{% endif %}
   {% if can_cancel %}
     <form method="post" action="{% url 'orders:set_status' o.pk %}" onsubmit="return confirm('Cancel {{ o.number }}?')">{% csrf_token %}<button class="btn" name="status" value="cancelled">Cancel order</button></form>
   {% endif %}
@@ -21,7 +19,7 @@
     <section class="card panel">
       <h2>Lines</h2>
       <table class="list">
-        <thead><tr><th>Part</th><th class="num">Quantity</th><th class="num">Unit price</th><th class="num">Total</th></tr></thead>
+        <thead><tr><th>Part</th><th class="num">Quantity</th><th class="num">Unit price</th><th class="num">Total</th>{% if o.status != 'draft' %}<th>Received</th>{% endif %}</tr></thead>
         <tbody>
         {% for line in lines %}
           <tr>
@@ -29,6 +27,9 @@
             <td class="num">{{ line.quantity|floatformat:"-2" }} {{ line.part.unit }}</td>
             <td class="num">{{ line.unit_price|floatformat:2|intcomma }}</td>
             <td class="num">{{ line.line_total|floatformat:2|intcomma }}</td>
+            {% if o.status != 'draft' %}<td>{% if line.received_at %}<span class="badge done">{{ line.received_at|date:"Y-m-d" }}</span>
+              {% if line.location %}<a href="{{ line.location.get_absolute_url }}">{% if line.location.code %}<code>{{ line.location.code }}</code>{% else %}{{ line.location.name }}{% endif %}</a>{% else %}<span class="muted">no location</span>{% endif %}
+              {% elif o.status == 'cancelled' %}—{% else %}<span class="muted">to come</span>{% endif %}</td>{% endif %}
           </tr>
         {% empty %}
           <tr><td colspan="4" class="muted">No lines yet. {% if o.status == 'draft' %}<a href="{% url 'orders:edit' o.pk %}">Add some</a>.{% endif %}</td></tr>

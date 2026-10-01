@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% load osmia_static %}
 {% block content %}
 <div class="toolbar">
   <h1>Stock moves</h1>
@@ -11,9 +10,8 @@
       {% endfor %}
     </select>
   </form>
-  <a class="btn primary" href="{% url 'inventory:move_create' %}">New move</a>
+  <a class="btn" href="{% url 'stock:list' %}" title="Select rows there to move stock to another location">Move stock…</a>
+  <a class="btn primary" href="{% url 'stock:move_create' %}">New move</a>
 </div>
-{% include "inventory/_move_bar.html" %}
-{% include "inventory/_moves_table.html" with moves=object_list selectable=True %}
-<script src="{% versioned_static 'core/select_rows.js' %}"></script>
+{% include "stock/_moves_table.html" with moves=object_list %}
 {% endblock %}

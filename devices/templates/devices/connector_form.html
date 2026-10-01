@@ -16,8 +16,7 @@
       <p class="muted">Click a column header to sort the list (again to reverse, a third time for pin order); sorting only changes
         how the list is shown, saving keeps the pins' order. Blank new rows are ignored. Pins with the same set number are one cable set
         (e.g. a twisted pair). Signals come from <a href="{% url 'devices:signals' %}" target="_blank">Devices › Signals</a>;
-        each tag column has its own list (<a href="{% url 'devices:tags' %}" target="_blank">Devices › Tags</a>), and
-        "+ Add new…" adds to it.</p>
+        tags are this connector's own: each tag column offers the values used here, and "+ Add new…" adds one.</p>
       {{ formset.management_form }}
       {{ formset.non_form_errors }}
       <table class="list compact" id="pin-table">
@@ -70,9 +69,26 @@
     </div>
   </form>
   {% if connector.pk %}
+  <form method="post" enctype="multipart/form-data" action="{% url 'devices:connector_import' device.pk connector.pk %}" class="pin-import">
+    {% csrf_token %}
+    <h2>Import a pin table</h2>
+    <p class="muted">A CSV file with a header row and one row per pin. Columns: <code>Pin</code> (required), <code>Tag 1</code>…<code>Tag 4</code>,
+      <code>Signal</code>, <code>Set</code>, <code>Set type</code>, in any order. Unknown signals are added to the signal list.
+      <a href="#" id="csv-example">Download an example</a>.</p>
+    <div class="import-row">
+      <input type="file" name="file" accept=".csv,text/csv,text/plain" required>
+      <label class="check"><input type="radio" name="mode" value="update" checked> Update pins with the same label, add new ones</label>
+      <label class="check"><input type="radio" name="mode" value="replace"> Replace the whole pin table</label>
+      <button class="btn">Import</button>
+    </div>
+    <p class="muted"><strong>Replace</strong> removes pins that aren't in the file and renumbers the rest in the file's order:
+      harness wires to this connector may then point at other pins. Save any changes above first: importing reloads the page.</p>
+  </form>
   <form method="post" action="{% url 'devices:connector_delete' device.pk connector.pk %}" onsubmit="return confirm('Remove {{ connector.designator }} and its pins?')" style="margin-top: 12px">
     {% csrf_token %}<button class="btn danger small">Remove connector</button>
   </form>
+  {% else %}
+  <p class="muted">To import a pin table from a CSV file, save the connector first; the import is then offered here.</p>
   {% endif %}
 </div>
 {{ part_info|json_script:"part-info" }}
@@ -148,6 +164,27 @@
     // New pin rows follow the columns shown.
     document.getElementById('btn-add-pin').addEventListener('click', () => setTimeout(show));
     show();
+  })();
+
+  // "Download an example" for the import.
+  (function () {
+    const link = document.getElementById('csv-example');
+    if (!link) return;
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const csv = [
+        'Pin,Tag 1,Signal,Set,Set type',
+        '1,ETH_TX+,TxP,1,twisted',
+        '2,ETH_TX-,TxN,1,twisted',
+        '3,ETH_RX+,RxP,2,twisted',
+        '6,ETH_RX-,RxN,2,twisted',
+        'S,SHIELD,SHIELD,,',
+      ].join('\r\n') + '\r\n';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+      a.download = 'pin-table-example.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+    });
   })();
 
   // Sets: pins with the same set number are one cable set, so they share a

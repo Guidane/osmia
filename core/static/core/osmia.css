@@ -341,3 +341,22 @@ button.sort-head.sorted::after { content: " ▲"; font-size: 10px; }
 button.sort-head.sorted.desc::after { content: " ▼"; }
 .part-details { border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; padding: 10px 14px; margin: 4px 0 12px; max-width: 560px; }
 .part-details h3 { margin: 0 0 6px; font-size: 14px; }
+
+/* Part picker (orders, assemblies, part links) */
+.part-picker { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: #fafbfc; margin: 8px 0 12px; }
+.picker-head, .picker-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.picker-search { flex: 1; min-width: 220px; }
+.picker-error { color: var(--danger); font-size: 13px; }
+.picker-results { max-height: 320px; overflow: auto; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); }
+.part-links-editor .link-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.part-links-editor h3 { margin: 4px 0; font-size: 14px; }
+ul.chips { list-style: none; padding: 0; margin: 0 0 4px; display: flex; flex-direction: column; gap: 3px; min-height: 1.5em; }
+ul.chips li { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 6px; display: flex; gap: 6px; align-items: center; }
+ul.chips li .chip-remove { margin-left: auto; border: 0; background: none; color: var(--danger); cursor: pointer; }
+.tool-choices ul { list-style: none; padding: 0; margin: 0; }
+.link-add { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.receive-all { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; }
+.pin-import { margin-top: 16px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; }
+.pin-import h2 { margin-top: 0; font-size: 15px; }
+.import-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.flash.warning { background: #fff7ed; border-color: #fed7aa; }

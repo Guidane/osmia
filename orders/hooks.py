@@ -40,7 +40,7 @@ def order_saved(sender, instance, created, **kwargs):
 @hooks.register('budget_costs')
 def order_costs(budget_ids):
     costs = defaultdict(Decimal)
-    for order in Order.objects.filter(budget_id__in=budget_ids, status__in=[Order.Status.PLACED, Order.Status.RECEIVED]).prefetch_related('lines'):
+    for order in Order.objects.filter(budget_id__in=budget_ids, status__in=[Order.Status.PLACED, Order.Status.PARTIAL, Order.Status.RECEIVED]).prefetch_related('lines'):
         costs[order.budget_id] += order.total
     return hooks.Costs('Orders', dict(costs))
 

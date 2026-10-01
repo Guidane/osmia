@@ -198,31 +198,17 @@ class PinDetailsTests(DeviceTestCase):
         self.assertRedirects(resp, j02.get_absolute_url())
         self.assertEqual(list(j02.pins.values_list('tag2', flat=True)), ['Bus A', 'Bus A', ''])
         self.assertEqual(j02.pins.get(label='3').tag3, '')  # "+ Add new…" without a value is ignored
-        self.assertIn('Bus A', TagOption.names()[2])
-        self.assertIn('Front', TagOption.names()[4])
-        self.assertIn('CAN1_H', TagOption.names()[1])
+        self.assertEqual(TagOption.names_for(j02)[2], ['Bus A'])
+        self.assertEqual(TagOption.names_for(j02)[4], ['Front'])
+        self.assertIn('CAN1_H', TagOption.names_for(j02)[1])
         self.assertEqual(self.pdu.definition()['connectors'][1]['pins'][0]['tags'], ['CAN1_H', 'Bus A', '', 'Front'])
-        # Another connector's Tag 2 dropdown now offers it.
+        # Tags are local to the connector: another connector's Tag 2 dropdown doesn't offer it.
         j01 = self.pdu.connectors.get(designator='J01')
-        self.assertContains(self.client.get(reverse('devices:connector_edit', args=[self.pdu.pk, j01.pk])), '<option value="Bus A">Bus A</option>')
-
-    def test_tags_page_renames_and_blocks_deleting_used_ones(self):
-        j01 = self.pdu.connectors.get(designator='J01')
-        j01.pins.filter(label='1').update(tag3='Left')
-        TagOption.objects.create(column=3, name='Left')
-        TagOption.objects.create(column=3, name='Unused')
-        options = list(TagOption.objects.all())
-        data = {'tags-TOTAL_FORMS': len(options), 'tags-INITIAL_FORMS': len(options), 'tags-MIN_NUM_FORMS': 0, 'tags-MAX_NUM_FORMS': 1000}
-        for i, o in enumerate(options):
-            data.update({f'tags-{i}-id': o.pk, f'tags-{i}-column': o.column, f'tags-{i}-name': 'Port side' if o.name == 'Left' else o.name})
-            if o.name in ('Unused', 'PWR_IN+'):
-                data[f'tags-{i}-DELETE'] = 'on'
-        resp = self.client.post(reverse('devices:tags'), data, follow=True)
-        self.assertContains(resp, 'Still used, so not deleted: Tag 1: PWR_IN+')
-        self.assertEqual(j01.pins.get(label='1').tag3, 'Port side')
-        self.assertFalse(TagOption.objects.filter(name='Unused').exists())
-        self.assertTrue(TagOption.objects.filter(name='PWR_IN+').exists())
-        self.assertContains(self.client.get(reverse('devices:list')), reverse('devices:tags'))
+        self.assertNotContains(self.client.get(reverse('devices:connector_edit', args=[self.pdu.pk, j01.pk])), 'value="Bus A"')
+        self.assertEqual(TagOption.names_for(j01)[2], [])
+        # Clones bring their lists along.
+        copy = self.pdu.clone_connector(j02)
+        self.assertEqual(TagOption.names_for(copy)[2], ['Bus A'])
 
     def test_sets_function_part_details_and_signal_list(self):
         j02 = self.pdu.connectors.get(designator='J02')
@@ -391,3 +377,73 @@ class SetTypeTests(DeviceTestCase):
         # Both changed together is fine.
         self.client.post(url, connector_post(j02, [(pins[0], {'set_type': 'twisted'}), (pins[1], {'set_type': 'twisted'}), (pins[2], {})]))
         self.assertEqual(set(j02.pins.filter(set_number=1).values_list('set_type', flat=True)), {'twisted'})
+
+
+class PinImportTests(DeviceTestCase):
+    def post(self, connector, text, mode='update'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        upload = SimpleUploadedFile('pins.csv', text.encode('utf-8'), content_type='text/csv')
+        url = reverse('devices:connector_import', args=[self.pdu.pk, connector.pk])
+        return self.client.post(url, {'file': upload, 'mode': mode}, follow=True)
+
+    def test_update_by_label_and_add_new_pins(self):
+        j02 = self.pdu.connectors.get(designator='J02')  # pins 1, 2, 3 with tags CAN1_H, CAN1_L, CAN1_GND
+        csv_text = 'Pin;Signal;Tag 2;Set;Set type\n1;CAN_H;Bus A;4;twisted pair\n2;CAN_L;Bus A;4;\n9;NEW_SIG;;;\n'
+        resp = self.post(j02, csv_text)
+        self.assertContains(resp, 'Imported 3 pins into J02: 2 updated, 1 added.')
+        self.assertContains(resp, 'New signals added to Devices › Signals: NEW_SIG')
+        pins = {p.label: p for p in j02.pins.all()}
+        self.assertEqual((pins['1'].tag1, pins['1'].tag2, pins['1'].set_number, pins['1'].set_type), ('CAN1_H', 'Bus A', 4, 'twisted'))
+        self.assertEqual(pins['2'].set_type, 'twisted')  # one type per set
+        self.assertEqual(pins['3'].tag1, 'CAN1_GND')      # not in the file: kept
+        self.assertEqual((pins['9'].position, pins['9'].signal), (4, 'NEW_SIG'))
+        self.assertTrue(Signal.objects.filter(name='NEW_SIG').exists())
+        j02.refresh_from_db()
+        self.assertEqual(j02.tag_columns, 2)
+        self.assertIn('Bus A', TagOption.names_for(j02)[2])
+        self.pdu.refresh_from_db()
+        self.assertEqual(self.pdu.version, 2)
+
+    def test_replace_the_whole_table(self):
+        j02 = self.pdu.connectors.get(designator='J02')
+        resp = self.post(j02, 'pin,tag,signal\nS,SHIELD,SHIELD\n2,CAN1_L,can_l\n', mode='replace')
+        self.assertContains(resp, '1 updated, 1 added, 2 removed')
+        self.assertEqual(list(j02.pins.values_list('position', 'label', 'signal')), [(1, 'S', 'SHIELD'), (2, '2', 'CAN_L')])
+
+    def test_problems_are_reported_and_bad_files_change_nothing(self):
+        j02 = self.pdu.connectors.get(designator='J02')
+        before = list(j02.pins.values_list('label', 'tag1', 'signal'))
+        for text, message in (
+            ('Signal,Tag\nGND,x\n', 'with one called &quot;Pin&quot;'),
+            ('Pin\n1\n1\n', 'Pin 1 is in the file twice'),
+            ('', 'The file is empty'),
+        ):
+            with self.subTest(text=text):
+                self.assertContains(self.post(j02, text), message)
+        self.assertEqual(list(j02.pins.values_list('label', 'tag1', 'signal')), before)
+        resp = self.post(j02, 'Pin,Set,Set type,Colour\n1,x,braided,red\n,,,\n')
+        self.assertContains(resp, 'set &quot;x&quot; is not a whole number')
+        self.assertContains(resp, 'set type &quot;braided&quot; not known')
+        self.assertContains(resp, 'Columns not used: Colour')
+
+    def test_import_form_on_existing_connectors_only(self):
+        j02 = self.pdu.connectors.get(designator='J02')
+        self.assertContains(self.client.get(reverse('devices:connector_edit', args=[self.pdu.pk, j02.pk])), 'Import a pin table')
+        self.assertContains(self.client.get(reverse('devices:connector_create', args=[self.pdu.pk])), 'save the connector first')
+
+
+class DeviceDeleteTests(DeviceTestCase):
+    def test_removed_only_when_no_harness_uses_it(self):
+        from harness.models import HarnessProject
+        project = HarnessProject()
+        project.save_version({'name': 'Bench', 'instances': [{'instance_id': 'i1', 'device_id': str(self.pdu.pk)}], 'harnesses': []})
+        url = reverse('devices:delete', args=[self.pdu.pk])
+        page = self.client.get(url)
+        self.assertContains(page, "can't be removed")
+        self.assertContains(page, 'Bench')
+        self.client.post(url)
+        self.assertTrue(Device.objects.filter(pk=self.pdu.pk).exists())
+        project.save_version({'name': 'Bench', 'instances': [], 'harnesses': []})
+        self.assertContains(self.client.get(url), 'Remove device')
+        self.assertRedirects(self.client.post(url), reverse('devices:list'))
+        self.assertFalse(Device.objects.filter(pk=self.pdu.pk).exists())

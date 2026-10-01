@@ -76,7 +76,7 @@ class PinForm(forms.ModelForm):
             names.append(current)  # an old value that isn't in the list yet
         self.fields['signal'].choices = [('', '—')] + [(n, n) for n in names]
 
-        options = tag_options if tag_options is not None else TagOption.names()
+        options = tag_options if tag_options is not None else TagOption.names_for(self.instance.connector if self.instance.connector_id else None)
         for column, field in enumerate(Pin.TAG_FIELDS, start=1):
             values = list(options.get(column, []))
             # Keep the pin's own value, and one just added on the page, even if the list doesn't have it yet.
@@ -99,11 +99,11 @@ class PinForm(forms.ModelForm):
 class BasePinFormSet(forms.BaseInlineFormSet):
     def __init__(self, *args, **kwargs):
         self._signals = list(Signal.objects.values_list('name', flat=True))
-        self._tag_options = TagOption.names()
         super().__init__(*args, **kwargs)
+        self._tag_options = TagOption.names_for(self.instance)  # this connector's own lists
 
     def get_form_kwargs(self, index):
-        return {**super().get_form_kwargs(index), 'signals': self._signals, 'tag_options': self._tag_options}
+        return {**super().get_form_kwargs(index), 'signals': self._signals, 'tag_options': getattr(self, '_tag_options', None)}
 
     def clean(self):
         super().clean()
@@ -119,15 +119,15 @@ class BasePinFormSet(forms.BaseInlineFormSet):
                                            'pins in one set share a type.')
             types.setdefault(number, kind)
 
-    def save_tag_options(self):
-        """Values added with "+ Add new…" join their column's list."""
+    def save_tag_options(self, connector):
+        """Values added with "+ Add new…" join the connector's list for that column."""
         for form in self.forms:
             data = getattr(form, 'cleaned_data', None) or {}
             if data.get('DELETE'):
                 continue
             for column, field in enumerate(Pin.TAG_FIELDS, start=1):
                 if data.get(field):
-                    TagOption.objects.get_or_create(column=column, name=data[field])
+                    TagOption.objects.get_or_create(connector=connector, column=column, name=data[field])
 
 
 PinFormSet = forms.inlineformset_factory(
@@ -146,18 +146,3 @@ class SignalForm(forms.ModelForm):
         if Signal.objects.filter(name__iexact=name).exclude(pk=self.instance.pk).exists():
             raise forms.ValidationError(f'There is already a signal {name}.')
         return name
-
-
-class TagOptionForm(forms.ModelForm):
-    class Meta:
-        model = TagOption
-        fields = ['column', 'name']
-        widgets = {'name': forms.TextInput(attrs={'style': 'width: 14em'})}
-
-    def clean(self):
-        data = super().clean()
-        name = (data.get('name') or '').strip()
-        data['name'] = name
-        if name and data.get('column') and TagOption.objects.filter(column=data['column'], name__iexact=name).exclude(pk=self.instance.pk).exists():
-            self.add_error('name', f'Tag {data["column"]} already has {name}.')
-        return data

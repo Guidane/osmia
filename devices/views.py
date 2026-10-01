@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, Q
 from django.forms import modelformset_factory
@@ -12,7 +13,7 @@ from assemblies.models import Assembly
 from core import hooks
 from core.trees import natural_key
 
-from .forms import ConnectorForm, DeviceForm, PinFormSet, SignalForm, TagOptionForm
+from .forms import ConnectorForm, DeviceForm, PinFormSet, SignalForm
 from .models import Connector, Device, Pin, PinMap, Signal, TagOption
 
 
@@ -155,7 +156,7 @@ def connector_form(request, device_pk, pk=None):
             connector = form.save()
             formset.instance = connector
             formset.save(commit=False)
-            formset.save_tag_options()
+            formset.save_tag_options(connector)
             for pin in formset.deleted_objects:
                 pin.delete()
             deleted = set(formset.deleted_forms)
@@ -293,41 +294,54 @@ def pin_mapping(request, pk):
     })
 
 
-# -- The four tag columns' lists --------------------------------------------------------
+@login_required
+@require_POST
+def connector_import(request, device_pk, pk):
+    """Edit pins > Import CSV: a pin table file updates or replaces the pins."""
+    from . import pin_import
 
-TagOptionFormSet = modelformset_factory(TagOption, form=TagOptionForm, extra=1, can_delete=True)
+    device = get_object_or_404(Device, pk=device_pk)
+    connector = get_object_or_404(Connector, pk=pk, device=device)
+    upload = request.FILES.get('file')
+    back = redirect('devices:connector_edit', device.pk, connector.pk)
+    if upload is None:
+        messages.error(request, 'Pick a CSV file to import.')
+        return back
+    try:
+        rows, unknown_columns = pin_import.read_rows(upload)
+        pins, problems = pin_import.clean_rows(rows)
+        with transaction.atomic():
+            result = pin_import.apply(connector, pins, replace=request.POST.get('mode') == 'replace')
+            new_version = device.snapshot(request.user)
+    except ValidationError as exc:
+        messages.error(request, 'Nothing imported: ' + ' '.join(exc.messages))
+        return back
+    parts = [f'{result["updated"]} updated', f'{result["created"]} added']
+    if result['removed']:
+        parts.append(f'{result["removed"]} removed')
+    messages.success(request, f'Imported {len(pins)} pins into {connector.designator}: ' + ', '.join(parts) + '.'
+                     + (f' Device is now v{device.version}.' if new_version else ''))
+    if result['added_signals']:
+        messages.info(request, 'New signals added to Devices › Signals: ' + ', '.join(result['added_signals']) + '.')
+    if unknown_columns:
+        messages.info(request, 'Columns not used: ' + ', '.join(unknown_columns) + '.')
+    for problem in problems[:20]:
+        messages.warning(request, problem)
+    return back
 
 
 @login_required
-def tags(request):
-    """The values each of the four tag columns offers (new ones are also added
-    from the pin editor's "+ Add new…")."""
-    formset = TagOptionFormSet(request.POST or None, queryset=TagOption.objects.all(), prefix='tags')
-    if request.method == 'POST' and formset.is_valid():
-        blocked = []
-        with transaction.atomic():
-            for form in formset.forms:
-                if not form.instance.pk and not form.cleaned_data.get('name'):
-                    continue
-                if form in formset.deleted_forms:
-                    if form.instance.pk:
-                        used = form.instance.usage()
-                        if used:
-                            blocked.append(f'{form.instance} ({used} pin{"s" if used != 1 else ""})')
-                        else:
-                            form.instance.delete()
-                    continue
-                if form.instance.pk:
-                    old = TagOption.objects.get(pk=form.instance.pk)
-                    if old.column != form.cleaned_data['column']:
-                        form.add_error('column', 'Move a tag by adding it to the other column instead.')
-                        continue
-                    old.rename(form.cleaned_data['name'])
-                else:
-                    form.save()
-        if blocked:
-            messages.error(request, 'Still used, so not deleted: ' + ', '.join(blocked) + '. Change those pins first.')
-        else:
-            messages.success(request, 'Tags saved.')
-        return redirect('devices:tags')
-    return render(request, 'devices/tags.html', {'formset': formset})
+def device_delete(request, pk):
+    """Remove a device, unless a harness project uses it."""
+    device = get_object_or_404(Device, pk=pk)
+    projects = []
+    from django.apps import apps
+    if apps.is_installed('harness'):
+        from harness.models import HarnessProject
+        projects = [p for p in HarnessProject.objects.prefetch_related('versions') if str(device.pk) in p.device_ids()]
+    if request.method == 'POST' and not projects:
+        name = str(device)
+        device.delete()
+        messages.success(request, f'Removed {name}.')
+        return redirect('devices:list')
+    return render(request, 'devices/device_delete.html', {'device': device, 'projects': projects})

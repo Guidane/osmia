@@ -1,67 +1,62 @@
-from django.contrib.auth import get_user_model
-
 from core.trees import get_or_create_path
-from tasks.models import Task
 
-from .models import Attribute, Category, Location, Part, PartAttributeValue, StockMove
-
+from .models import Attribute, Category, Part, PartAttributeValue
 
 CATEGORY_ATTRIBUTES = {
     'Hardware > Fasteners': [('material', 'steel'), ('thread', 'M6'), ('manufacturer', 'Bossard')],
     'Hardware > Bearings': [('material', 'chrome steel'), ('bore', '20mm'), ('manufacturer', 'SKF')],
     'Electrical > Connectors': [('pins', '25'), ('manufacturer', 'Amphenol')],
+    'Electrical > Contacts': [('wire size', '24-20 AWG'), ('plating', 'gold')],
     'Spare parts': [],
     'Safety': [('size', 'L')],
 }
 
-# (part number, description, category, location, unit, cost, reorder at, opening qty, attributes)
+# (part number, description, category, unit, attributes); stock is in the Stock module's demo.
 PARTS = [
-    ('BLT-M8', 'M8 hex bolt', 'Hardware > Fasteners', 'Warehouse > Aisle 1 > Bin A1', 'pcs', '0.12', 200, 500,
-     {'material': 'steel', 'thread': 'M8'}),
-    ('NUT-M8', 'M8 nut', 'Hardware > Fasteners', 'Warehouse > Aisle 1 > Bin A1', 'pcs', '0.05', 200, 150,
-     {'material': 'steel', 'thread': 'M8'}),
-    ('608ZZ', 'Deep groove ball bearing', 'Hardware > Bearings', 'Warehouse > Aisle 1 > Shelf 3', 'pcs', '1.80', 10, 40,
-     {'bore': '8mm', 'manufacturer': 'SKF'}),
-    ('DB25-M', 'D-sub 25 plug', 'Electrical > Connectors', 'Warehouse > Aisle 2 > Drawer 4', 'pcs', '2.40', 10, 30,
-     {'pins': '25'}),
-    ('DB25-F', 'D-sub 25 socket', 'Electrical > Connectors', 'Warehouse > Aisle 2 > Drawer 4', 'pcs', '2.60', 10, 8,
-     {'pins': '25'}),
-    ('BELT-C2', 'Conveyor belt 2m', 'Spare parts', 'Warehouse > Cage', 'pcs', '89.00', 1, 3, {}),
-    ('BAT-FL48', 'Forklift battery 48V', 'Spare parts', 'Warehouse > Cage', 'pcs', '1250.00', 1, 1, {}),
-    ('GLV-L', 'Work gloves', 'Safety', 'Warehouse > Aisle 2 > Drawer 1', 'pair', '3.50', 20, 12, {'size': 'L'}),
+    ('BLT-M8', 'M8 hex bolt', 'Hardware > Fasteners', 'pcs', {'material': 'steel', 'thread': 'M8'}),
+    ('NUT-M8', 'M8 nut', 'Hardware > Fasteners', 'pcs', {'material': 'steel', 'thread': 'M8'}),
+    ('608ZZ', 'Deep groove ball bearing', 'Hardware > Bearings', 'pcs', {'bore': '8mm', 'manufacturer': 'SKF'}),
+    ('DB25-M', 'D-sub 25 plug', 'Electrical > Connectors', 'pcs', {'pins': '25'}),
+    ('DB25-F', 'D-sub 25 socket', 'Electrical > Connectors', 'pcs', {'pins': '25'}),
+    ('DS-PIN-C', 'D-sub crimp contact, pin', 'Electrical > Contacts', 'pcs', {'wire size': '24-20 AWG'}),
+    ('DS-SKT-C', 'D-sub crimp contact, socket', 'Electrical > Contacts', 'pcs', {'wire size': '24-20 AWG'}),
+    ('BELT-C2', 'Conveyor belt 2m', 'Spare parts', 'pcs', {}),
+    ('BAT-FL48', 'Forklift battery 48V', 'Spare parts', 'pcs', {}),
+    ('GLV-L', 'Work gloves', 'Safety', 'pair', {'size': 'L'}),
 ]
 
 
 def load():
-    """Additive: creates what's missing and fills blanks on existing demo parts,
-    without touching their stock."""
-    first_run = not Part.objects.exists()
+    """Additive: creates what's missing and fills blanks on existing demo parts."""
     for path, attrs in CATEGORY_ATTRIBUTES.items():
         category = get_or_create_path(Category, path)
         for name, typical in attrs:
             Attribute.objects.get_or_create(category=category, name=name, defaults={'default_value': typical})
 
-    bob = get_user_model().objects.filter(username='bob').first()
-    for number, name, cat, loc, unit, cost, reorder, qty, values in PARTS:
-        category, location = get_or_create_path(Category, cat), get_or_create_path(Location, loc)
-        part, created = Part.objects.get_or_create(part_number=number, defaults={
-            'name': name, 'category': category, 'location': location, 'unit': unit, 'cost': cost,
-            'reorder_level': reorder,
-        })
-        if not created:
-            if part.location is None:
-                part.location = location
-            if part.category is None or part.category.name == category.name:
-                part.category = category
+    for number, name, cat, unit, values in PARTS:
+        category = get_or_create_path(Category, cat)
+        part, created = Part.objects.get_or_create(part_number=number, defaults={'name': name, 'category': category, 'unit': unit})
+        if not created and (part.category is None or part.category.name == category.name):
+            part.category = category
             part.save()
         for attr_name, value in values.items():
             PartAttributeValue.objects.get_or_create(
                 part=part, attribute=category.attributes.get(name=attr_name), defaults={'value': value},
             )
-        if created:
-            StockMove.record(part, StockMove.Type.IN, qty, user=bob, note='Opening stock')
 
-    repair = Task.objects.filter(title__startswith='Repair conveyor').first()
-    if first_run and repair:
-        belt = Part.objects.get(part_number='BELT-C2')
-        StockMove.record(belt, StockMove.Type.OUT, -1, user=repair.assignee, task=repair, note='Replacement belt')
+    # How they go together: the plug mates with the socket; each housing takes its crimp contacts,
+    # which are crimped with the D-sub crimp tool.
+    parts = {p.part_number: p for p in Part.objects.filter(part_number__in=[row[0] for row in PARTS])}
+    if 'DB25-M' in parts and 'DB25-F' in parts:
+        parts['DB25-M'].mates_with.add(parts['DB25-F'])
+    for housing, contact in (('DB25-M', 'DS-PIN-C'), ('DB25-F', 'DS-SKT-C')):
+        if housing in parts and contact in parts:
+            parts[housing].fits.add(parts[contact])
+    from django.apps import apps
+    if apps.is_installed('tools'):
+        from tools.models import Tool
+        crimp = Tool.objects.filter(name='D-sub crimp tool').first()
+        insertion = Tool.objects.filter(name='D-sub insertion/extraction tool').first()
+        for number in ('DS-PIN-C', 'DS-SKT-C'):
+            if number in parts:
+                parts[number].tools.add(*[t for t in (crimp, insertion) if t])

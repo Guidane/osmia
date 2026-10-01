@@ -37,10 +37,10 @@ class OrderDetailView(LoginRequiredMixin, DetailView):
             Spending().annotate([budget])
         return super().get_context_data(
             **kwargs,
-            lines=o.lines.select_related('part'),
+            lines=o.lines.select_related('part', 'location'),
             budget=budget,
             can_place=o.can_become(Order.Status.PLACED),
-            can_receive=o.can_become(Order.Status.RECEIVED),
+            can_receive=o.can_receive,
             can_cancel=o.can_become(Order.Status.CANCELLED),
             panels=hooks.collect('order_detail_panels', self.request, o),
         )
@@ -79,3 +79,40 @@ def set_status(request, pk):
     except (ValidationError, ValueError) as exc:
         messages.error(request, ' '.join(getattr(exc, 'messages', [str(exc)])))
     return redirect(order)
+
+
+@login_required
+def receive(request, pk):
+    """Receive an order: tick the lines that came in and say where each is put
+    away (or one location for all). Lines left unticked stay open."""
+    from core.trees import link_parents, sorted_by_path
+    from stock.models import Location
+
+    order = get_object_or_404(Order, pk=pk)
+    if not order.can_receive:
+        messages.error(request, f'{order.number} is {order.get_status_display().lower()}, so there is nothing to receive.')
+        return redirect(order)
+    lines = list(order.open_lines().select_related('part'))
+    locations = sorted_by_path(link_parents(Location.objects.all()))
+    by_id = {str(loc.pk): loc for loc in locations}
+    if request.method == 'POST':
+        chosen = {}
+        for line in lines:
+            if request.POST.get(f'receive-{line.pk}'):
+                chosen[line] = by_id.get(request.POST.get(f'location-{line.pk}', ''))
+        if not chosen:
+            messages.error(request, 'Tick the lines that came in.')
+        else:
+            try:
+                order.receive(chosen, user=request.user)
+            except ValidationError as exc:
+                messages.error(request, ' '.join(exc.messages))
+            else:
+                left = len(lines) - len(chosen)
+                messages.success(request, f'Received {len(chosen)} line{"s" if len(chosen) != 1 else ""} of {order.number} into stock.'
+                                 + (f' {left} line{"s" if left != 1 else ""} still to come.' if left else ''))
+                return redirect(order)
+    return render(request, 'orders/order_receive.html', {
+        'order': order, 'lines': lines, 'locations': locations,
+        'received': order.lines.exclude(received_at=None).select_related('part', 'location'),
+    })

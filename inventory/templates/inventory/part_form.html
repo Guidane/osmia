@@ -39,6 +39,39 @@
     </fieldset>
     </div>
 
+    <fieldset class="part-links-editor">
+      <legend>Goes with</legend>
+      {{ form.mates_with }}{{ form.fits }}
+      {{ form.mates_with.errors }}{{ form.fits.errors }}
+      <div class="link-lists">
+        <div>
+          <h3 title="{{ form.mates_with.help_text }}">Mates with</h3>
+          <ul class="chips" data-link="mates_with">
+            {% for p in form.mates_with_linked %}<li data-id="{{ p.pk }}"><a href="{{ p.get_absolute_url }}" target="_blank">{{ p.part_number }}</a> <span class="muted">{{ p.name }}</span> <button type="button" class="chip-remove" title="Remove">✕</button></li>{% endfor %}
+          </ul>
+          <small class="muted">{{ form.mates_with.help_text }}</small>
+        </div>
+        <div>
+          <h3 title="{{ form.fits.help_text }}">Accepts</h3>
+          <ul class="chips" data-link="fits">
+            {% for p in form.fits_linked %}<li data-id="{{ p.pk }}"><a href="{{ p.get_absolute_url }}" target="_blank">{{ p.part_number }}</a> <span class="muted">{{ p.name }}</span> <button type="button" class="chip-remove" title="Remove">✕</button></li>{% endfor %}
+          </ul>
+          <small class="muted">{{ form.fits.help_text }}</small>
+        </div>
+        <div>
+          <h3>Tools</h3>
+          <div class="tool-choices">{{ form.tools }}</div>
+          <small class="muted">{{ form.tools.help_text }} <a href="{% url 'tools:create' %}" target="_blank">New tool ↗</a></small>
+        </div>
+      </div>
+      <div class="link-add">
+        <span>Add a part as:</span>
+        <label class="check"><input type="radio" name="link-target" value="mates_with" checked form="none"> Mates with</label>
+        <label class="check"><input type="radio" name="link-target" value="fits" form="none"> Accepts</label>
+      </div>
+      {% include "inventory/_part_picker.html" with picker_id="link-picker" add_label="Add" exclude=form.instance.pk %}
+    </fieldset>
+
     <div class="actions">
       <button class="btn primary">Save</button>
       <a class="btn" href="{% if cancel_url %}{{ cancel_url }}{% else %}{% url 'inventory:part_list' %}{% endif %}">Cancel</a>
@@ -46,6 +79,30 @@
   </form>
 </div>
 <script>
+  // "Goes with": picked parts become chips and are selected in the hidden fields.
+  (function () {
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const select = name => document.querySelector(`select[name="${name}"]`);
+    document.getElementById('link-picker').addEventListener('part-picked', e => {
+      const part = e.detail;
+      const name = document.querySelector('input[name=link-target]:checked').value;
+      const s = select(name);
+      let opt = [...s.options].find(o => o.value === String(part.id));
+      if (!opt) { opt = new Option(part.part_number, part.id); s.appendChild(opt); }
+      if (opt.selected) return;
+      opt.selected = true;
+      const list = document.querySelector(`ul.chips[data-link="${name}"]`);
+      list.insertAdjacentHTML('beforeend', `<li data-id="${part.id}"><a href="${esc(part.url)}" target="_blank">${esc(part.part_number)}</a> <span class="muted">${esc(part.name)}</span> <button type="button" class="chip-remove" title="Remove">✕</button></li>`);
+    });
+    document.querySelectorAll('ul.chips').forEach(list => list.addEventListener('click', e => {
+      if (!e.target.closest('.chip-remove')) return;
+      const li = e.target.closest('li');
+      const opt = [...select(list.dataset.link).options].find(o => o.value === li.dataset.id);
+      if (opt) opt.selected = false;
+      li.remove();
+    }));
+  })();
+
   (function () {
     const form = document.getElementById('part-form');
     const category = document.getElementById('{{ form.category.id_for_label }}');
