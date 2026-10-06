@@ -3,26 +3,41 @@ from core.trees import get_or_create_path
 from .models import Attribute, Category, Part, PartAttributeValue
 
 CATEGORY_ATTRIBUTES = {
-    'Hardware > Fasteners': [('material', 'steel'), ('thread', 'M6'), ('manufacturer', 'Bossard')],
-    'Hardware > Bearings': [('material', 'chrome steel'), ('bore', '20mm'), ('manufacturer', 'SKF')],
+    'Hardware > Fasteners': [('material', 'stainless steel'), ('thread', 'M3'), ('manufacturer', 'Würth')],
+    'Passives > Resistors': [('resistance', '10 kΩ'), ('power', '0.25 W'), ('tolerance', '1%'), ('manufacturer', 'Vishay')],
+    'Passives > Capacitors': [('capacitance', '100 µF'), ('voltage', '50 V'), ('type', 'electrolytic')],
+    'Power > Power supplies': [('output voltage', '24 V'), ('output power', '150 W'), ('input', '100-240 VAC'),
+                               ('manufacturer', 'Mean Well')],
+    'Power > Fuses': [('current', '5 A'), ('size', '5x20 mm'), ('speed', 'slow-blow')],
     'Electrical > Connectors': [('pins', '25'), ('manufacturer', 'Amphenol')],
     'Electrical > Contacts': [('wire size', '24-20 AWG'), ('plating', 'gold')],
-    'Spare parts': [],
-    'Safety': [('size', 'L')],
+    'Safety': [('cord length', '1.8 m')],
 }
 
 # (part number, description, category, unit, attributes); stock is in the Stock module's demo.
 PARTS = [
-    ('BLT-M8', 'M8 hex bolt', 'Hardware > Fasteners', 'pcs', {'material': 'steel', 'thread': 'M8'}),
-    ('NUT-M8', 'M8 nut', 'Hardware > Fasteners', 'pcs', {'material': 'steel', 'thread': 'M8'}),
-    ('608ZZ', 'Deep groove ball bearing', 'Hardware > Bearings', 'pcs', {'bore': '8mm', 'manufacturer': 'SKF'}),
+    ('SCR-M3X8', 'M3 x 8 pan head screw', 'Hardware > Fasteners', 'pcs', {'material': 'stainless steel', 'thread': 'M3'}),
+    ('NUT-M3', 'M3 hex nut', 'Hardware > Fasteners', 'pcs', {'material': 'stainless steel', 'thread': 'M3'}),
+    ('RES-100R-50W', 'Power resistor 100 Ω 50 W, aluminium housed', 'Passives > Resistors', 'pcs',
+     {'resistance': '100 Ω', 'power': '50 W', 'tolerance': '5%', 'manufacturer': 'Arcol'}),
+    ('RES-0R1-5W', 'Shunt resistor 0.1 Ω 5 W', 'Passives > Resistors', 'pcs',
+     {'resistance': '0.1 Ω', 'power': '5 W', 'tolerance': '1%', 'manufacturer': 'Vishay'}),
+    ('RES-10K-0603', 'Resistor 10 kΩ 0603', 'Passives > Resistors', 'pcs',
+     {'resistance': '10 kΩ', 'power': '0.1 W', 'tolerance': '1%', 'manufacturer': 'Yageo'}),
+    ('CAP-470U-63V', 'Electrolytic capacitor 470 µF 63 V', 'Passives > Capacitors', 'pcs',
+     {'capacitance': '470 µF', 'voltage': '63 V', 'type': 'electrolytic'}),
+    ('PSU-24V-150W', 'DIN rail power supply 24 V 150 W', 'Power > Power supplies', 'pcs',
+     {'output voltage': '24 V', 'output power': '150 W', 'input': '100-240 VAC', 'manufacturer': 'Mean Well'}),
+    ('PSU-12V-50W', 'Enclosed power supply 12 V 50 W', 'Power > Power supplies', 'pcs',
+     {'output voltage': '12 V', 'output power': '50 W', 'input': '100-240 VAC', 'manufacturer': 'Mean Well'}),
+    ('PSU-PROG-3K', 'Programmable DC power supply 0-80 V 3 kW', 'Power > Power supplies', 'pcs',
+     {'output voltage': '0-80 V', 'output power': '3 kW', 'input': '3 x 400 VAC'}),
+    ('FUSE-T5A', 'Fuse 5 A slow-blow 5x20 mm', 'Power > Fuses', 'pcs', {'current': '5 A', 'size': '5x20 mm', 'speed': 'slow-blow'}),
     ('DB25-M', 'D-sub 25 plug', 'Electrical > Connectors', 'pcs', {'pins': '25'}),
     ('DB25-F', 'D-sub 25 socket', 'Electrical > Connectors', 'pcs', {'pins': '25'}),
     ('DS-PIN-C', 'D-sub crimp contact, pin', 'Electrical > Contacts', 'pcs', {'wire size': '24-20 AWG'}),
     ('DS-SKT-C', 'D-sub crimp contact, socket', 'Electrical > Contacts', 'pcs', {'wire size': '24-20 AWG'}),
-    ('BELT-C2', 'Conveyor belt 2m', 'Spare parts', 'pcs', {}),
-    ('BAT-FL48', 'Forklift battery 48V', 'Spare parts', 'pcs', {}),
-    ('GLV-L', 'Work gloves', 'Safety', 'pair', {'size': 'L'}),
+    ('ESD-STRAP', 'ESD wrist strap', 'Safety', 'pcs', {'cord length': '1.8 m'}),
 ]
 
 

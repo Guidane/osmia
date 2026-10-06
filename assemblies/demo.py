@@ -24,23 +24,23 @@ def load():
     )
     bom(cable, ('DB25-M', 1), ('DB25-F', 1))
 
-    roller = Assembly.objects.create(
-        name='Idler roller', assembly_type=Assembly.Type.GENERIC,
-        build_instructions='Press both bearings into the roller, then fit the axle bolt and nut.',
+    module = Assembly.objects.create(
+        name='Load resistor module', assembly_type=Assembly.Type.GENERIC,
+        build_instructions='Put thermal paste on both power resistors and screw them to the heatsink.',
     )
-    bom(roller, ('608ZZ', 2), ('BLT-M8', 1), ('NUT-M8', 1))
+    bom(module, ('RES-100R-50W', 2), ('SCR-M3X8', 1), ('NUT-M3', 1))
 
-    conveyor = Assembly.objects.create(
-        name='Conveyor section', assembly_type=Assembly.Type.GENERIC, version='2',
-        build_instructions='Mount the rollers on the frame, fit the belt, then connect the sensor cable.',
-        usage_instructions='Check belt tension weekly.',
+    rack = Assembly.objects.create(
+        name='Power test rack', assembly_type=Assembly.Type.GENERIC, version='2',
+        build_instructions='Mount the load modules and the power supply in the rack, then connect the sensor cable.',
+        usage_instructions='Check the resistor temperatures at full load before leaving a test running.',
     )
-    bom(conveyor, (roller, 6), (cable, 1), ('BELT-C2', 1), ('BLT-M8', 12), ('NUT-M8', 12))
+    bom(rack, (module, 6), (cable, 1), ('PSU-24V-150W', 1), ('SCR-M3X8', 12), ('NUT-M3', 12))
 
     admin = get_user_model().objects.filter(username='admin').first()
-    task = Task.objects.filter(title__startswith='Repair conveyor').first()
+    task = Task.objects.filter(title__startswith='Repair returned PDU').first()
     if task:
-        TaskLink.objects.create(task=task, assembly=conveyor)
+        TaskLink.objects.create(task=task, assembly=rack)
     elif admin:
-        task = Task.objects.create(title=f'Build {conveyor}', created_by=admin)
-        TaskLink.objects.create(task=task, assembly=conveyor)
+        task = Task.objects.create(title=f'Build {rack}', created_by=admin)
+        TaskLink.objects.create(task=task, assembly=rack)

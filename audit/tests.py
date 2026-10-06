@@ -30,7 +30,7 @@ class AuditTestCase(TestCase):
 
 class ChangeLogTests(AuditTestCase):
     def test_edit_through_a_page_logs_the_fields_that_changed(self):
-        task = Task.objects.get(title__startswith='Repair conveyor')
+        task = Task.objects.get(title__startswith='Repair returned PDU')
         self.client.post(reverse('tasks:set_status', args=[task.pk]), {'status': 'in_progress'})
         e = self.entries(module='tasks', object_id=task.pk).get()
         self.assertEqual(e.action, 'changed')
@@ -49,7 +49,7 @@ class ChangeLogTests(AuditTestCase):
         self.assertEqual(self.entries(object_id=pk, module='tasks').last().action, 'deleted')
 
     def test_child_rows_are_logged_on_their_parent(self):
-        order = Order.objects.get(supplier='Connector Supply Co.')
+        order = Order.objects.get(supplier__name='Connector Supply Co.')
         line = order.lines.first()
         line.quantity = 25
         line.save()
@@ -76,7 +76,7 @@ class ChangeLogTests(AuditTestCase):
 
 class ChainTests(AuditTestCase):
     def test_order_to_tasks_to_stock_is_one_traceable_chain(self):
-        order = Order.objects.get(supplier='Connector Supply Co.')
+        order = Order.objects.get(supplier__name='Connector Supply Co.')
         # 1. Placing the order (Orders page) makes a rule create tasks.
         self.client.post(reverse('orders:set_status', args=[order.pk]), {'status': 'placed'})
         placed = self.entries(module='orders', object_id=order.pk).get()
@@ -123,15 +123,15 @@ class ChainTests(AuditTestCase):
 
 class PageTests(AuditTestCase):
     def test_pages_and_filters(self):
-        task = Task.objects.get(title__startswith='Repair conveyor')
+        task = Task.objects.get(title__startswith='Repair returned PDU')
         self.client.post(reverse('tasks:set_status', args=[task.pk]), {'status': 'done'})
         ct = ContentType.objects.get_for_model(Task)
         for url in (reverse('audit:list'), reverse('audit:list') + '?module=tasks&action=changed&chained=1&q=repair&user=none',
                     reverse('audit:chains'), reverse('audit:activity'), reverse('audit:history', args=[ct.pk, task.pk])):
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).status_code, 200)
-        self.assertContains(self.client.get(reverse('audit:list') + '?module=tasks'), 'Repair conveyor')
-        self.assertNotContains(self.client.get(reverse('audit:list') + '?module=inventory'), 'Repair conveyor')
+        self.assertContains(self.client.get(reverse('audit:list') + '?module=tasks'), 'Repair returned PDU')
+        self.assertNotContains(self.client.get(reverse('audit:list') + '?module=inventory'), 'Repair returned PDU')
         # Each module's menu links to its log, and detail pages show a History panel.
         page = self.client.get(task.get_absolute_url())
         self.assertContains(page, reverse('audit:list') + '?module=tasks')

@@ -40,8 +40,8 @@ class PageSmokeTests(TestCase):
 
     def test_all_pages_render(self):
         user = User.objects.get(username='carla')
-        task = Task.objects.get(title__startswith='Repair conveyor')
-        part = Part.objects.get(part_number='BELT-C2')
+        task = Task.objects.get(title__startswith='Repair returned PDU')
+        part = Part.objects.get(part_number='PSU-24V-150W')
         location = StockItem.objects.filter(part=part).first().location
         urls = [
             reverse('core:home'),
@@ -52,7 +52,7 @@ class PageSmokeTests(TestCase):
             reverse('tasks:gantt') + '?weeks=abc&start=garbage', reverse('tasks:mine'), reverse('tasks:create'),
             reverse('tasks:detail', args=[task.pk]), reverse('tasks:edit', args=[task.pk]),
             reverse('tasks:delete', args=[task.pk]),
-            reverse('inventory:part_list') + '?q=steel m8', reverse('inventory:part_create'),
+            reverse('inventory:part_list') + '?q=stainless m3', reverse('inventory:part_create'),
             reverse('inventory:part_detail', args=[part.pk]),
             reverse('inventory:part_edit', args=[part.pk]),
             reverse('stock:list'), reverse('stock:move_list'), reverse('stock:move_create') + f'?task={task.pk}',
@@ -81,13 +81,13 @@ class PageSmokeTests(TestCase):
         resp = self.client.get(reverse('users:detail', args=[carla.pk]))
         self.assertContains(resp, 'Open tasks')          # from tasks
         self.assertContains(resp, 'Recent stock moves')  # from stock
-        task = Task.objects.get(title__startswith='Repair conveyor')
+        task = Task.objects.get(title__startswith='Repair returned PDU')
         resp = self.client.get(reverse('tasks:detail', args=[task.pk]))
         self.assertContains(resp, 'Materials')
-        self.assertContains(resp, 'Conveyor belt 2m')
+        self.assertContains(resp, 'DIN rail power supply 24 V 150 W')
 
     def test_set_status(self):
-        task = Task.objects.get(title__startswith='Repair conveyor')
+        task = Task.objects.get(title__startswith='Repair returned PDU')
         self.client.post(reverse('tasks:set_status', args=[task.pk]), {'status': 'done'})
         task.refresh_from_db()
         self.assertEqual(task.status, 'done')
@@ -113,7 +113,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(resp, 'Due date cannot be before the start date.')
 
     def test_stock_moves_update_quantity(self):
-        part = Part.objects.get(part_number='NUT-M8')
+        part = Part.objects.get(part_number='NUT-M3')
         where = StockItem.objects.get(part=part).location
         url = reverse('stock:move_create')
         self.client.post(url, {'part': part.pk, 'move_type': 'in', 'location': where.pk, 'quantity': '50'})
@@ -123,7 +123,7 @@ class PageSmokeTests(TestCase):
         self.assertEqual(part.moves.first().delta, -20)
 
     def test_cannot_issue_more_than_on_hand(self):
-        part = Part.objects.get(part_number='BAT-FL48')
+        part = Part.objects.get(part_number='PSU-PROG-3K')
         where = StockItem.objects.get(part=part).location
         resp = self.client.post(reverse('stock:move_create'), {'part': part.pk, 'move_type': 'out', 'location': where.pk, 'quantity': '5'})
         self.assertContains(resp, 'Only 1 pcs at')
@@ -176,7 +176,7 @@ class ImageTests(TestCase):
         self.override = override_settings(MEDIA_ROOT=self.media)
         self.override.enable()
         self.client.login(username='admin', password='admin')
-        self.part = Part.objects.get(part_number='BELT-C2')
+        self.part = Part.objects.get(part_number='PSU-24V-150W')
 
     def tearDown(self):
         self.override.disable()
@@ -187,10 +187,10 @@ class ImageTests(TestCase):
         return self.client.post(url, {'images': list(files), **extra}, follow=follow)
 
     def test_upload_is_resized_turned_upright_and_stripped(self):
-        response = self.upload(self.part, picture(orientation=6), caption='Belt', next='https://evil.example/')
+        response = self.upload(self.part, picture(orientation=6), caption='Label side', next='https://evil.example/')
         self.assertRedirects(response, self.part.get_absolute_url())  # unsafe "next" ignored
         image = self.part.images.get()
-        self.assertEqual(image.caption, 'Belt')
+        self.assertEqual(image.caption, 'Label side')
         self.assertEqual(image.uploaded_by.username, 'admin')
         # 3000x1500 rotated a quarter turn by its EXIF orientation, then scaled to fit 2000.
         self.assertEqual((image.width, image.height), (1000, 2000))
@@ -217,8 +217,8 @@ class ImageTests(TestCase):
         self.assertContains(response, 'not an image Osmia can read')
 
     def test_only_models_with_images(self):
-        order_url = reverse('core:image_upload', args=['orders.order', 1])
-        self.assertEqual(self.client.post(order_url, {'images': [picture()]}).status_code, 404)
+        budget_url = reverse('core:image_upload', args=['budgets.budget', 1])
+        self.assertEqual(self.client.post(budget_url, {'images': [picture()]}).status_code, 404)
         self.assertEqual(self.client.post(reverse('core:image_upload', args=['nope.nothing', 1])).status_code, 404)
 
     def test_user_photos_are_theirs_and_managers(self):

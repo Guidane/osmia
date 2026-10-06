@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize osmia_images %}
 {% block content %}
 {% with o=order %}
 <div class="toolbar">
@@ -41,9 +41,10 @@
     {# Panels contributed by other modules, e.g. tasks automation rules created for this order #}
     {% include "core/panels.html" %}
   </div>
+  <div>
   <section class="card">
     <dl class="props">
-      <dt>Supplier</dt><dd>{{ o.supplier|default:"—" }}</dd>
+      <dt>Supplier</dt><dd>{% if o.supplier %}<a href="{{ o.supplier.get_absolute_url }}">{{ o.supplier }}</a>{% else %}—{% endif %}</dd>
       <dt>Budget</dt><dd>{% if budget %}<a href="{{ budget.get_absolute_url }}">{{ budget }}</a><br><small class="muted">{{ budget.remaining|floatformat:2|intcomma }} of {{ budget.amount|floatformat:2|intcomma }} left{% if not o.counts_against_budget %}, before this order{% endif %}</small>{% else %}—{% endif %}</dd>
       <dt>Created</dt><dd>{{ o.created_at|date }}{% if o.created_by %} by {{ o.created_by }}{% endif %}</dd>
       {% if o.placed_at %}<dt>Placed</dt><dd>{{ o.placed_at|date }}</dd>{% endif %}
@@ -51,6 +52,8 @@
     </dl>
     {% if o.notes %}{{ o.notes|linebreaks }}{% endif %}
   </section>
+  {% image_gallery o title="Shipping documents" empty="No shipping documents yet. Add photos or scans of the delivery note, packing slip, ..." %}
+  </div>
 </div>
 {% endwith %}
 {% endblock %}

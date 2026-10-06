@@ -24,7 +24,7 @@ class AutomationTestCase(TestCase):
 
     def setUp(self):
         self.client.login(username='admin', password='admin')
-        self.order = Order.objects.get(supplier='Connector Supply Co.')
+        self.order = Order.objects.get(supplier__name='Connector Supply Co.')
         self.check_in = Rule.objects.get(trigger='orders.order_placed')
         self.receive = Rule.objects.get(trigger='tasks.batch_completed')
         self.alice = User.objects.get(username='alice')

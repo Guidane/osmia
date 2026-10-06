@@ -28,13 +28,13 @@ class StockTestCase(TestCase):
 
 class StockLevelTests(StockTestCase):
     def test_demo_stock_is_per_location_with_settings(self):
-        bolt = Part.objects.get(part_number='BLT-M8')
+        bolt = Part.objects.get(part_number='SCR-M3X8')
         item = StockItem.objects.get(part=bolt)
         self.assertEqual((item.quantity, item.location.full_path()), (Decimal('500'), 'Warehouse > Aisle 1 > Bin A1'))
         self.assertEqual((bolt.stock.reorder_level, bolt.stock.average_cost), (Decimal('200'), Decimal('0.12')))
 
     def test_receive_issue_and_count_per_location(self):
-        part = Part.objects.get(part_number='GLV-L')
+        part = Part.objects.get(part_number='ESD-STRAP')
         hall = self.hall([{'name': 'Shelf', 'count': 2, 'style': 'A'}])
         a, b = Location.objects.get(code='HA'), Location.objects.get(code='HB')
         before = on_hand(part)
@@ -54,7 +54,7 @@ class StockLevelTests(StockTestCase):
         self.assertEqual(StockItem.objects.get(part=part, location=a).quantity, 10)
         # The issue form checks the chosen location.
         resp = self.client.post(url, {'part': part.pk, 'move_type': 'out', 'location': b.pk, 'quantity': '8'})
-        self.assertContains(resp, 'Only 7 pair at')
+        self.assertContains(resp, 'Only 7 pcs at')
         self.assertTrue(hall.pk)
 
     def test_low_stock_event_and_list(self):
@@ -63,16 +63,16 @@ class StockLevelTests(StockTestCase):
         listener = lambda key, obj, source: seen.append((key, getattr(obj, 'part_number', '')))  # noqa: E731
         automation.subscribe(listener)
         self.addCleanup(automation._listeners.remove, listener)
-        nut = Part.objects.get(part_number='NUT-M8')  # 150 on hand, reorder at 200: already low
-        self.assertIn('NUT-M8', self.client.get(reverse('stock:list') + '?low=1').content.decode())
-        bolt = Part.objects.get(part_number='BLT-M8')  # 500, reorder at 200
+        nut = Part.objects.get(part_number='NUT-M3')  # 150 on hand, reorder at 200: already low
+        self.assertIn('NUT-M3', self.client.get(reverse('stock:list') + '?low=1').content.decode())
+        bolt = Part.objects.get(part_number='SCR-M3X8')  # 500, reorder at 200
         item = StockItem.objects.get(part=bolt)
         StockMove.record(bolt, StockMove.Type.OUT, -300, location=item.location)
-        self.assertIn(('stock.stock_low', 'BLT-M8'), seen)
+        self.assertIn(('stock.stock_low', 'SCR-M3X8'), seen)
         self.assertTrue(nut.pk)
 
     def test_pages(self):
-        part = Part.objects.get(part_number='BELT-C2')
+        part = Part.objects.get(part_number='PSU-24V-150W')
         for url in (reverse('stock:list'), reverse('stock:list') + '?q=a1&location=none&low=1', reverse('stock:move_list'),
                     reverse('stock:move_list') + f'?part={part.pk}&type=out', reverse('stock:move_create') + f'?part={part.pk}',
                     reverse('stock:location_list'), reverse('stock:location_create'), reverse('stock:location_generate'),
@@ -81,7 +81,7 @@ class StockLevelTests(StockTestCase):
                 self.assertEqual(self.client.get(url).status_code, 200)
         page = self.client.get(part.get_absolute_url())
         self.assertContains(page, 'on hand')        # the stock panel on the part's page
-        self.assertContains(page, 'Replacement belt')
+        self.assertContains(page, 'Replacement power supply')
         self.client.post(reverse('stock:part_settings', args=[part.pk]), {'reorder_level': '5'})
         self.assertEqual(PartStock.of(part).reorder_level, 5)
 
@@ -121,9 +121,9 @@ class LocationCodeTests(StockTestCase):
         self.client.post(reverse('stock:location_generate'), data)
         self.assertEqual(Location.objects.filter(pk__in=hall.descendant_ids()).count(), 4 + 28 + 112)
         # Stock can be found by its location's code.
-        part = Part.objects.get(part_number='GLV-L')
+        part = Part.objects.get(part_number='ESD-STRAP')
         StockMove.record(part, StockMove.Type.IN, 3, location=shelf)
-        self.assertContains(self.client.get(reverse('stock:list') + '?q=a1a'), 'GLV-L')
+        self.assertContains(self.client.get(reverse('stock:list') + '?q=a1a'), 'ESD-STRAP')
         for url in (reverse('stock:location_list'), shelf.get_absolute_url()):
             self.assertContains(self.client.get(url), 'A1A')
 
@@ -193,39 +193,39 @@ class TransferTests(StockTestCase):
         super().setUp()
         self.hall([{'name': 'Shelf', 'count': 3, 'style': 'A'}])
         self.a, self.b = Location.objects.get(code='HA'), Location.objects.get(code='HB')
-        self.gloves = Part.objects.get(part_number='GLV-L')
-        self.bolts = Part.objects.get(part_number='BLT-M8')
+        self.straps = Part.objects.get(part_number='ESD-STRAP')
+        self.bolts = Part.objects.get(part_number='SCR-M3X8')
 
     def test_move_selected_rows_to_another_location(self):
         url = reverse('stock:list')
         page = self.client.get(url)
         self.assertContains(page, 'id="transfer-form"')
         self.assertContains(page, 'class="row-select" name="items"')
-        items = [StockItem.objects.get(part=self.gloves), StockItem.objects.get(part=self.bolts)]
-        totals = {p.pk: on_hand(p) for p in (self.gloves, self.bolts)}
+        items = [StockItem.objects.get(part=self.straps), StockItem.objects.get(part=self.bolts)]
+        totals = {p.pk: on_hand(p) for p in (self.straps, self.bolts)}
         response = self.client.post(reverse('stock:transfer'), {
             'items': [i.pk for i in items], 'location': self.b.pk, 'next': url, 'note': 'Reorganised'})
         self.assertRedirects(response, url)
-        for p in (self.gloves, self.bolts):
+        for p in (self.straps, self.bolts):
             self.assertEqual(list(StockItem.objects.filter(part=p).values_list('location', flat=True)), [self.b.pk])
             self.assertEqual(on_hand(p), totals[p.pk])
         moves = StockMove.objects.filter(move_type=StockMove.Type.TRANSFER)
         self.assertEqual(moves.count(), 2)
-        self.assertEqual(moves.filter(part=self.gloves).get().note, 'Reorganised')
+        self.assertEqual(moves.filter(part=self.straps).get().note, 'Reorganised')
         # Moving onto stock of the same part already there adds them together.
-        StockMove.record(self.gloves, StockMove.Type.IN, 3, location=self.a)
-        item_a = StockItem.objects.get(part=self.gloves, location=self.a)
+        StockMove.record(self.straps, StockMove.Type.IN, 3, location=self.a)
+        item_a = StockItem.objects.get(part=self.straps, location=self.a)
         self.client.post(reverse('stock:transfer'), {'items': [item_a.pk], 'location': self.b.pk})
-        self.assertEqual(StockItem.objects.get(part=self.gloves, location=self.b).quantity, totals[self.gloves.pk] + 3)
-        self.assertFalse(StockItem.objects.filter(part=self.gloves, location=self.a).exists())
+        self.assertEqual(StockItem.objects.get(part=self.straps, location=self.b).quantity, totals[self.straps.pk] + 3)
+        self.assertFalse(StockItem.objects.filter(part=self.straps, location=self.a).exists())
         # The location's and the part's pages offer the same.
         self.assertContains(self.client.get(self.b.get_absolute_url()), 'id="transfer-form"')
-        page = self.client.get(self.gloves.get_absolute_url())
+        page = self.client.get(self.straps.get_absolute_url())
         self.assertContains(page, 'Transfer')
         self.assertContains(page, '<code>HB</code>')
 
     def test_needs_a_location_and_rows(self):
-        item = StockItem.objects.get(part=self.gloves)
+        item = StockItem.objects.get(part=self.straps)
         self.client.post(reverse('stock:transfer'), {'items': [item.pk]})
         self.client.post(reverse('stock:transfer'), {'location': self.a.pk})
         self.assertFalse(StockMove.objects.filter(move_type=StockMove.Type.TRANSFER).exists())

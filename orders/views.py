@@ -17,7 +17,7 @@ class OrderListView(LoginRequiredMixin, ListView):
     model = Order
 
     def get_queryset(self):
-        qs = Order.objects.select_related('budget').prefetch_related('lines')
+        qs = Order.objects.select_related('budget', 'supplier').prefetch_related('lines')
         if self.request.GET.get('status') in Order.Status.values:
             qs = qs.filter(status=self.request.GET['status'])
         return qs

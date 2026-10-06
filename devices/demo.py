@@ -64,7 +64,7 @@ def load():
         name='Power distribution unit', assembly_type=Assembly.Type.DEVICE,
         build_instructions='Fit both D-sub 25 sockets to the front panel and wire per the pinout.',
     )
-    for number in ('DB25-F', 'BLT-M8', 'NUT-M8'):
+    for number in ('DB25-F', 'SCR-M3X8', 'NUT-M3'):
         if number in parts:
             AssemblyComponent.objects.create(assembly=pdu_assembly, part=parts[number], quantity=2 if number == 'DB25-F' else 4)
     pdu = Device.objects.create(

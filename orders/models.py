@@ -1,9 +1,10 @@
-"""Purchase orders, as in Waggle V3: a supplier, a budget to spend against and
+"""Purchase orders, as in Waggle V3: a supplier (a vendor), a budget to spend against and
 lines of parts. Receiving books the lines that came in into stock, each at the
 location it's put away at; lines still to come keep the order open."""
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericRelation
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.urls import reverse
@@ -28,10 +29,11 @@ class Order(models.Model):
     }
 
     number = models.CharField(max_length=30, unique=True, blank=True, editable=False)
-    supplier = models.CharField(max_length=200, blank=True)
+    supplier = models.ForeignKey('vendors.Vendor', null=True, blank=True, on_delete=models.PROTECT, related_name='orders')
     budget = models.ForeignKey('budgets.Budget', null=True, blank=True, on_delete=models.SET_NULL, related_name='orders')
     status = models.CharField(max_length=20, choices=Status, default=Status.DRAFT, editable=False)
     notes = models.TextField(blank=True)
+    images = GenericRelation('core.Image')  # shipping documents: delivery notes, packing slips, ...
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name='orders', editable=False)
     created_at = models.DateTimeField(auto_now_add=True)

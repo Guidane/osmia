@@ -60,6 +60,7 @@ OSMIA_MODULES = [
     'users',
     'tasks',
     'tools',
+    'vendors',
     'inventory',
     'stock',
     'assemblies',

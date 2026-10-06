@@ -162,22 +162,22 @@ class PartLinkTests(TestCase):
         self.assertNotContains(page, 'Unit cost')
         # Edited on the part's form: the links are picked with the part picker.
         crimp = Tool.objects.get(name='D-sub crimp tool')
-        glove = Part.objects.get(part_number='GLV-L')
-        edit = self.client.get(reverse('inventory:part_edit', args=[glove.pk]))
+        strap = Part.objects.get(part_number='ESD-STRAP')
+        edit = self.client.get(reverse('inventory:part_edit', args=[strap.pk]))
         self.assertContains(edit, 'data-part-picker')
-        self.assertContains(edit, f'data-exclude="{glove.pk}"')
-        self.client.post(reverse('inventory:part_edit', args=[glove.pk]), {
-            'part_number': glove.part_number, 'name': glove.name, 'category': glove.category_id, 'unit': 'pair',
+        self.assertContains(edit, f'data-exclude="{strap.pk}"')
+        self.client.post(reverse('inventory:part_edit', args=[strap.pk]), {
+            'part_number': strap.part_number, 'name': strap.name, 'category': strap.category_id, 'unit': 'pair',
             'is_active': 'on', 'mates_with': [plug.pk], 'fits': [contact.pk], 'tools': [crimp.pk],
         })
-        self.assertEqual(list(glove.mates_with.all()), [plug])
-        self.assertEqual(list(glove.fits.all()), [contact])
-        self.assertEqual(list(glove.tools.all()), [crimp])
+        self.assertEqual(list(strap.mates_with.all()), [plug])
+        self.assertEqual(list(strap.fits.all()), [contact])
+        self.assertEqual(list(strap.tools.all()), [crimp])
         self.assertContains(self.client.get(reverse('inventory:part_list')), 'mates with')
 
     def test_part_search_and_quick_create(self):
-        found = self.client.get(reverse('inventory:part_search') + '?q=SKF').json()['parts']
-        self.assertEqual([p['part_number'] for p in found], ['608ZZ'])
+        found = self.client.get(reverse('inventory:part_search') + '?q=Arcol').json()['parts']
+        self.assertEqual([p['part_number'] for p in found], ['RES-100R-50W'])
         resp = self.client.post(reverse('inventory:part_quick_create'), {'part_number': ' QX-1 ', 'name': 'Quick one'},
                                 content_type='application/json')
         self.assertEqual(resp.json()['part']['part_number'], 'QX-1')

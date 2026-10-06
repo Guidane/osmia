@@ -49,6 +49,25 @@
   </form>
 </div>
 <script>
+  // Budget in two steps: the sub-budget list shows only the chosen parent's sub-budgets.
+  (function () {
+    const parent = document.getElementById('id_parent_budget');
+    const sub = document.getElementById('id_budget');
+    if (!parent || !sub) return;
+    function filter() {
+      for (const opt of sub.options) {
+        if (!opt.value) continue;  // "---------": charge the parent itself
+        const show = opt.dataset.parent === parent.value;
+        opt.hidden = !show;
+        opt.disabled = !show;
+      }
+      if (sub.selectedOptions[0] && sub.selectedOptions[0].disabled) sub.value = '';
+      sub.disabled = !parent.value;
+    }
+    parent.addEventListener('change', filter);
+    filter();
+  })();
+
   // "Add to order" in the picker: a new line for the part (or one more of it).
   (function () {
     const total = document.getElementById('id_lines-TOTAL_FORMS');

@@ -21,10 +21,10 @@ def create_tasks():
     # (title, assignee, status, priority, starts in N days, due in N days)
     rows = [
         ('Quarterly stock count', 'alice', Task.Status.IN_PROGRESS, Task.Priority.HIGH, -5, 2),
-        ('Repair conveyor belt #2', 'carla', Task.Status.TODO, Task.Priority.HIGH, -4, -1),
-        ('Reorganise aisle B shelving', 'bob', Task.Status.TODO, Task.Priority.NORMAL, 3, 10),
-        ('Onboard new warehouse staff', 'alice', Task.Status.TODO, Task.Priority.LOW, 8, 21),
-        ('Replace forklift battery', 'carla', Task.Status.DONE, Task.Priority.NORMAL, -9, -3),
+        ('Repair returned PDU-100 #2', 'carla', Task.Status.TODO, Task.Priority.HIGH, -4, -1),
+        ('Sort the resistor drawers by value', 'bob', Task.Status.TODO, Task.Priority.NORMAL, 3, 10),
+        ('ESD training for new staff', 'alice', Task.Status.TODO, Task.Priority.LOW, 8, 21),
+        ('Calibrate the electronic load', 'carla', Task.Status.DONE, Task.Priority.NORMAL, -9, -3),
     ]
     for title, who, status, priority, start_in, due_in in rows:
         Task.objects.create(

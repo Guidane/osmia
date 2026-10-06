@@ -13,7 +13,7 @@ from .models import Order
 
 ORDER_FIELDS = [
     Field('number', 'Number', lambda o: o.number),
-    Field('supplier', 'Supplier', lambda o: o.supplier),
+    Field('supplier', 'Supplier', lambda o: o.supplier.name if o.supplier else ''),
     Field('budget', 'Budget', lambda o: o.budget or ''),
     Field('total', 'Total', lambda o: o.total, kind='number'),
 ]

@@ -9,7 +9,7 @@ class OrdersConfig(OsmiaModuleConfig):
         description='Purchase orders against budgets; receiving books the parts into stock.',
         icon='🧾',
         sequence=35,
-        depends=('users', 'inventory', 'stock', 'budgets'),
+        depends=('users', 'inventory', 'stock', 'budgets', 'vendors'),
         menu=(
             MenuItem('Orders', 'orders:list'),
             MenuItem('New order', 'orders:create'),

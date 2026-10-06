@@ -22,12 +22,12 @@ class DemoDataTestCase(TestCase):
     def setUp(self):
         self.client.login(username='admin', password='admin')
         self.budgets = {b.budget_number: b for b in Budget.objects.all()}
-        self.repair = Task.objects.get(title__startswith='Repair conveyor')
+        self.repair = Task.objects.get(title__startswith='Repair returned PDU')
 
 
 class BudgetTests(DemoDataTestCase):
     def test_spend_rolls_up_the_tree(self):
-        # The demo repair task (Field Service) was issued one 89.00 conveyor belt.
+        # The demo repair task (Field Service) was issued one 89.00 power supply.
         spending = Spending()
         fs, ops, fy = self.budgets['B-OPS-FS'], self.budgets['B-OPS'], self.budgets['B-2026']
         self.assertEqual(TaskBudget.objects.get(task=self.repair).budget, fs)
@@ -38,10 +38,10 @@ class BudgetTests(DemoDataTestCase):
         self.assertEqual(spending.total[self.budgets['B-ENG'].pk], 0)
 
     def test_cost_is_fixed_when_moved_and_returns_reduce_it(self):
-        belt = Part.objects.get(part_number='BELT-C2')
-        PartStock.objects.filter(part=belt).update(average_cost=Decimal('500.00'))  # e.g. a pricier batch came in
+        psu = Part.objects.get(part_number='PSU-24V-150W')
+        PartStock.objects.filter(part=psu).update(average_cost=Decimal('500.00'))  # e.g. a pricier batch came in
         self.assertEqual(Spending().own[self.budgets['B-OPS-FS'].pk], Decimal('89.00'))
-        StockMove.record(belt, StockMove.Type.IN, 1, task=self.repair, note='Returned')  # at the average cost, 500.00
+        StockMove.record(psu, StockMove.Type.IN, 1, task=self.repair, note='Returned')  # at the average cost, 500.00
         self.assertEqual(Spending().own[self.budgets['B-OPS-FS'].pk], Decimal('-411.00'))
 
     def test_budget_must_match_task_department(self):
@@ -77,6 +77,40 @@ class BudgetTests(DemoDataTestCase):
         ]:
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_list_and_detail_are_tree_tables(self):
+        fy, ops, fs = self.budgets['B-2026'], self.budgets['B-OPS'], self.budgets['B-OPS-FS']
+        listing = self.client.get(reverse('budgets:list'))
+        self.assertContains(listing, 'data-tree="budgets"')
+        self.assertContains(listing, f'data-id="{fs.pk}" data-parent="{ops.pk}" data-depth="2"')
+        page = self.client.get(fy.get_absolute_url())
+        # The whole subtree, starting at the left under this budget.
+        self.assertContains(page, f'data-id="{ops.pk}" data-parent="" data-depth="0"')
+        self.assertContains(page, f'data-id="{fs.pk}" data-parent="{ops.pk}" data-depth="1"')
+
+    def test_sub_budgets_on_the_form(self):
+        ops, fs = self.budgets['B-OPS'], self.budgets['B-OPS-FS']
+        url = reverse('budgets:edit', args=[ops.pk])
+        resp = self.client.get(url)
+        subs = list(resp.context['formset'].queryset)
+        data = {'name': ops.name, 'budget_number': ops.budget_number, 'amount': ops.amount,
+                'parent': ops.parent_id or '', 'department': ops.department_id or '',
+                'subs-TOTAL_FORMS': len(subs) + 2, 'subs-INITIAL_FORMS': len(subs)}
+        for i, sub in enumerate(subs):
+            data.update({f'subs-{i}-id': sub.pk, f'subs-{i}-parent': ops.pk, f'subs-{i}-name': sub.name,
+                         f'subs-{i}-budget_number': sub.budget_number, f'subs-{i}-amount': sub.amount,
+                         f'subs-{i}-department': sub.department_id or ''})
+        n = len(subs)
+        data.update({f'subs-{n}-name': 'Training', f'subs-{n}-budget_number': 'B-OPS-TR', f'subs-{n}-amount': '1000',
+                     f'subs-{n + 1}-name': '', f'subs-{n + 1}-amount': '0'})
+        self.assertRedirects(self.client.post(url, data), ops.get_absolute_url())
+        training = Budget.objects.get(budget_number='B-OPS-TR')
+        self.assertEqual((training.parent, training.department, training.amount), (ops, ops.department, 1000))
+        # A sub-budget with a task charged to it can't be deleted.
+        data[f'subs-{subs.index(fs)}-DELETE'] = 'on'
+        resp = self.client.post(url, data)
+        self.assertContains(resp, "charged to it, so it can")
+        self.assertTrue(Budget.objects.filter(pk=fs.pk).exists())
 
     def test_members_cannot_manage_budgets(self):
         self.client.login(username='bob', password='demo')
